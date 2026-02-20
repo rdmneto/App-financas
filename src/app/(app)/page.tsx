@@ -75,10 +75,10 @@ export default function DashboardPage() {
 
             const [incomesRes, expensesRes, investmentsRes, pastIncomesRes, pastExpensesRes] = await Promise.all([
                 supabase.from('incomes').select('value, date').gte('date', startDateStr).lte('date', endDateStr),
-                supabase.from('expenses').select('value, category_type, date').gte('date', startDateStr).lte('date', endDateStr),
+                supabase.from('expenses').select('value, category_type, date, is_recurring, recurrence_end_date').gte('date', startDateStr).lte('date', endDateStr),
                 supabase.from('investments').select('value, date').gte('date', startDateStr).lte('date', endDateStr),
                 supabase.from('incomes').select('value').lt('date', startDateStr),
-                supabase.from('expenses').select('value').lt('date', startDateStr)
+                supabase.from('expenses').select('value, category_type, date, is_recurring, recurrence_end_date').lt('date', startDateStr)
             ]);
 
             let iSum = 0;
@@ -89,16 +89,82 @@ export default function DashboardPage() {
             let lifeSum = 0;
             let savSum = 0;
 
-            if (expensesRes.data) {
-                expensesRes.data.forEach(e => {
-                    eSum += e.value;
-                    if (e.category_type === 'Essenciais') essSum += e.value;
-                    else if (e.category_type === 'Estilo de Vida') lifeSum += e.value;
-                    else if (e.category_type === 'Poupança') savSum += e.value;
-                    // Note: If using the old name 'Poupança/Dívidas' it falls into the last bucket
-                    else if (e.category_type.includes('Poupança')) savSum += e.value;
+            const currentYear = now.getFullYear();
+            const currentMonth = now.getMonth();
+
+            // Helper to generate virtuals for a given expense list
+            const processExpenses = (expenseList: any[], isPastList: boolean) => {
+                let processed: any[] = [];
+                expenseList.forEach(e => {
+                    // Always add the original if it belongs to this list's timeframe
+                    processed.push(e);
+
+                    if (e.is_recurring) {
+                        const [yearStr, monthStr, dayStr] = e.date.split('-');
+                        let loopDate = new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr.split('T')[0]));
+                        loopDate.setMonth(loopDate.getMonth() + 1);
+
+                        let endLimit = new Date(currentYear, currentMonth, loopDate.getDate());
+                        if (e.recurrence_end_date) {
+                            const [ey, em, ed] = e.recurrence_end_date.split('-');
+                            const cancelDate = new Date(Number(ey), Number(em) - 1, Number(ed.split('T')[0]));
+                            if (cancelDate < endLimit) {
+                                endLimit = cancelDate;
+                            }
+                        }
+
+                        while (
+                            (loopDate.getFullYear() < endLimit.getFullYear()) ||
+                            (loopDate.getFullYear() === endLimit.getFullYear() && loopDate.getMonth() <= endLimit.getMonth())
+                        ) {
+                            if (e.recurrence_end_date) {
+                                const cancelDate = new Date(e.recurrence_end_date);
+                                if (loopDate > cancelDate) break;
+                            }
+                            if (loopDate > now) break;
+
+                            // Date boundary check for whether this virtual clone belongs in "past" or "current" bucket
+                            if (isPastList) {
+                                if (loopDate < startDate) {
+                                    processed.push({ ...e, date: loopDate.toISOString() });
+                                }
+                            } else {
+                                if (loopDate >= startDate && loopDate <= endDate) {
+                                    processed.push({ ...e, date: loopDate.toISOString() });
+                                }
+                            }
+
+                            loopDate.setMonth(loopDate.getMonth() + 1);
+                        }
+                    }
                 });
-            }
+                return processed;
+            };
+
+            const processedExpensesData = expensesRes.data ? processExpenses(expensesRes.data, false) : [];
+            const processedPastExpensesData = pastExpensesRes.data ? processExpenses(pastExpensesRes.data, true) : [];
+
+            // Some past expenses might generate virtuals that fall into the CURRENT time window!
+            // We need to move those from processedPastExpensesData to processedExpensesData
+            const finalPastExpenses: any[] = [];
+            processedPastExpensesData.forEach(e => {
+                const eDate = new Date(e.date);
+                if (eDate >= startDate && eDate <= endDate) {
+                    processedExpensesData.push(e);
+                } else if (eDate < startDate) {
+                    finalPastExpenses.push(e);
+                }
+            });
+
+
+            processedExpensesData.forEach(e => {
+                eSum += e.value;
+                if (e.category_type === 'Essenciais') essSum += e.value;
+                else if (e.category_type === 'Estilo de Vida') lifeSum += e.value;
+                else if (e.category_type === 'Poupança') savSum += e.value;
+                // Note: If using the old name 'Poupança/Dívidas' it falls into the last bucket
+                else if (e.category_type.includes('Poupança')) savSum += e.value;
+            });
 
             let invSum = 0;
             if (investmentsRes.data) invSum = investmentsRes.data.reduce((acc, curr) => acc + curr.value, 0);
@@ -107,7 +173,9 @@ export default function DashboardPage() {
             if (pastIncomesRes.data) pastIncomesSum = pastIncomesRes.data.reduce((acc, curr) => acc + curr.value, 0);
 
             let pastExpensesSum = 0;
-            if (pastExpensesRes.data) pastExpensesSum = pastExpensesRes.data.reduce((acc, curr) => acc + curr.value, 0);
+            finalPastExpenses.forEach(e => {
+                pastExpensesSum += e.value;
+            });
 
             const initialBalance = pastIncomesSum - pastExpensesSum;
             setPreviousBalance(initialBalance);
@@ -142,7 +210,6 @@ export default function DashboardPage() {
             }
 
             const incomesData = incomesRes.data || [];
-            const expensesData = expensesRes.data || [];
 
             // Group transactions precisely into chart bins chronologically avoiding external timezone shifts
             incomesData.forEach(income => {
@@ -153,7 +220,7 @@ export default function DashboardPage() {
                 if (filter === "ano") bins[d.getMonth()].balance += income.value;
             });
 
-            expensesData.forEach(expense => {
+            processedExpensesData.forEach(expense => {
                 const [year, month, day] = expense.date.split('-');
                 const d = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
                 if (filter === "semana") bins[d.getDay()].balance -= expense.value;

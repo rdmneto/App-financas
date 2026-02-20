@@ -11,6 +11,7 @@ type ExpenseFormData = {
     date: string;
     description: string;
     category: string;
+    is_recurring: boolean;
 };
 
 // 50/30/20 Classification helper
@@ -30,6 +31,10 @@ type Expense = {
     description: string;
     category: string;
     bucket: string;
+    is_recurring?: boolean;
+    recurrence_end_date?: string | null;
+    is_virtual?: boolean;
+    original_id?: string;
 };
 
 export default function ExpensesPage() {
@@ -52,7 +57,12 @@ export default function ExpensesPage() {
                 .order('date', { ascending: false });
 
             if (!error && data) {
-                const mappedData = data.map((d: any) => {
+                let mappedData: Expense[] = [];
+                const now = new Date();
+                const currentYear = now.getFullYear();
+                const currentMonth = now.getMonth();
+
+                data.forEach((d: any) => {
                     // Extract original category from description if prepended, else use category_type
                     let originalCategory = "Outros";
                     let originalDesc = d.description;
@@ -61,15 +71,70 @@ export default function ExpensesPage() {
                         originalCategory = parts[0];
                         originalDesc = parts.slice(1).join(" - ");
                     }
-                    return {
+
+                    const baseExpense: Expense = {
                         id: d.id,
                         value: d.value,
                         date: d.date,
                         description: originalDesc,
                         category: originalCategory,
-                        bucket: d.category_type
+                        bucket: d.category_type,
+                        is_recurring: d.is_recurring,
+                        recurrence_end_date: d.recurrence_end_date
                     };
+
+                    mappedData.push(baseExpense);
+
+                    // Generate virtual recurring expenses
+                    if (d.is_recurring) {
+                        const startDate = new Date(d.date);
+                        // Convert DB date safely assuming it was local when posted or UTC depending on how it was saved
+                        // It's safest to parse the exact YYYY-MM-DD string to avoid timezone shifts
+                        const [yearStr, monthStr, dayStr] = d.date.split('-');
+                        let loopDate = new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr.split('T')[0]));
+
+                        // Advance loopDate by 1 month to start generating copies
+                        loopDate.setMonth(loopDate.getMonth() + 1);
+
+                        // Stop either at recurrence_end_date OR the current month (don't generate future months)
+                        let endLimit = new Date(currentYear, currentMonth, loopDate.getDate());
+                        if (d.recurrence_end_date) {
+                            const [ey, em, ed] = d.recurrence_end_date.split('-');
+                            const cancelDate = new Date(Number(ey), Number(em) - 1, Number(ed.split('T')[0]));
+                            if (cancelDate < endLimit) {
+                                endLimit = cancelDate;
+                            }
+                        }
+
+                        while (
+                            (loopDate.getFullYear() < endLimit.getFullYear()) ||
+                            (loopDate.getFullYear() === endLimit.getFullYear() && loopDate.getMonth() <= endLimit.getMonth())
+                        ) {
+                            // If the endLimit is this exact month, make sure the day hasn't passed if we consider cancelDate EXACT.
+                            // But usually, monthly recurrence stops the month AFTER cancel. Let's just use month/year.
+                            if (d.recurrence_end_date) {
+                                const cancelDate = new Date(d.recurrence_end_date);
+                                if (loopDate > cancelDate) break;
+                            }
+
+                            if (loopDate > now) break; // Final safeguard against future projection
+
+                            const virtualDateStr = `${loopDate.getFullYear()}-${String(loopDate.getMonth() + 1).padStart(2, '0')}-${String(loopDate.getDate()).padStart(2, '0')}`;
+                            mappedData.push({
+                                ...baseExpense,
+                                id: `${d.id}-virtual-${virtualDateStr}`,
+                                date: virtualDateStr,
+                                is_virtual: true,
+                                original_id: d.id
+                            });
+
+                            loopDate.setMonth(loopDate.getMonth() + 1);
+                        }
+                    }
                 });
+
+                // Re-sort after adding virtuals
+                mappedData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                 setExpenses(mappedData);
             }
             setIsLoading(false);
@@ -89,7 +154,8 @@ export default function ExpensesPage() {
             value: Number(data.value),
             date: data.date,
             description: `${data.category} - ${data.description}`,
-            category_type: bucketInfo.name
+            category_type: bucketInfo.name,
+            is_recurring: data.is_recurring || false
         };
 
         if (editingId) {
@@ -101,17 +167,8 @@ export default function ExpensesPage() {
                 .single();
 
             if (!error && updatedData) {
-                const mappedUpdatedData = {
-                    id: updatedData.id,
-                    value: updatedData.value,
-                    date: updatedData.date,
-                    description: data.description,
-                    category: data.category,
-                    bucket: updatedData.category_type
-                };
-                setExpenses(expenses.map(e => e.id === editingId ? mappedUpdatedData : e));
-                setEditingId(null);
-                reset({ description: "", value: "" as any, date: "", category: "" });
+                // To safely update the UI with complex virtuals, we reload the whole page list.
+                window.location.reload();
             } else {
                 alert("Erro ao atualizar despesa.");
             }
@@ -123,16 +180,7 @@ export default function ExpensesPage() {
                 .single();
 
             if (!error && insertedData) {
-                const mappedData = {
-                    id: insertedData.id,
-                    value: insertedData.value,
-                    date: insertedData.date,
-                    description: data.description,
-                    category: data.category,
-                    bucket: insertedData.category_type
-                };
-                setExpenses([mappedData, ...expenses]);
-                reset({ description: "", value: "" as any, date: "", category: "" });
+                window.location.reload();
             } else {
                 alert("Erro ao salvar despesa.");
             }
@@ -141,29 +189,65 @@ export default function ExpensesPage() {
     };
 
     const editExpense = (expense: Expense) => {
+        if (expense.is_virtual) {
+            alert("Não é possível editar uma ocorrência mensal repetida. Edite o lançamento original.");
+            return;
+        }
         setEditingId(expense.id);
         reset({
             description: expense.description,
             value: expense.value,
             date: expense.date,
-            category: expense.category
+            category: expense.category,
+            is_recurring: expense.is_recurring
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const cancelEdit = () => {
         setEditingId(null);
-        reset({ description: "", value: "" as any, date: "", category: "" });
+        reset({ description: "", value: "" as any, date: "", category: "", is_recurring: false });
     };
 
-    const deleteExpense = async (id: string) => {
-        if (!confirm("Tem certeza que deseja excluir esta despesa?")) return;
+    const deleteExpense = async (id: string, isVirtual?: boolean, originalId?: string) => {
+        if (isVirtual) {
+            alert("Para excluir, você deve excluir o lançamento original, ou cancelar a assinatura.");
+            return;
+        }
+        if (!confirm("Tem certeza que deseja excluir esta despesa? Lançamentos repetidos dessa despesa também sumirão.")) return;
+
+        setIsLoading(true);
         const { error } = await supabase.from('expenses').delete().eq('id', id);
         if (!error) {
-            setExpenses(expenses.filter(e => e.id !== id));
+            // Filter out both the original and any virtual children
+            setExpenses(expenses.filter(e => e.id !== id && e.original_id !== id));
         } else {
             alert("Erro ao excluir despesa.");
         }
+        setIsLoading(false);
+    };
+
+    const cancelRecurrence = async (id: string, isVirtual?: boolean, originalId?: string) => {
+        const targetId = isVirtual ? originalId : id;
+        if (!targetId) return;
+
+        if (!confirm("Deseja cancelar esta assinatura? Ela deixará de ser cobrada a partir de hoje.")) return;
+        setIsLoading(true);
+
+        const now = new Date();
+        const cancelDateStr = now.toISOString();
+
+        const { error } = await supabase
+            .from('expenses')
+            .update({ recurrence_end_date: cancelDateStr })
+            .eq('id', targetId);
+
+        if (!error) {
+            window.location.reload();
+        } else {
+            alert("Erro ao cancelar assinatura.");
+        }
+        setIsLoading(false);
     };
 
     // Calculate totals dynamically from current state array instead of static variables
@@ -198,7 +282,7 @@ export default function ExpensesPage() {
                     <div className="space-y-1">
                         <div className="flex justify-between text-sm">
                             <span className="font-medium text-blue-500 text-xs md:text-sm">Essenciais (50%)</span>
-                            <span className="font-medium">R$ {totalEssentials}</span>
+                            <span className="font-medium">R$ {totalEssentials.toFixed(2).replace('.', ',')}</span>
                         </div>
                         <div className="h-2.5 w-full bg-muted rounded-full overflow-hidden">
                             <div className="h-full bg-blue-500" style={{ width: '50%' }}></div>
@@ -207,7 +291,7 @@ export default function ExpensesPage() {
                     <div className="space-y-1">
                         <div className="flex justify-between text-sm">
                             <span className="font-medium text-purple-500 text-xs md:text-sm">Estilo de Vida (30%)</span>
-                            <span className="font-medium">R$ {totalLifestyle}</span>
+                            <span className="font-medium">R$ {totalLifestyle.toFixed(2).replace('.', ',')}</span>
                         </div>
                         <div className="h-2.5 w-full bg-muted rounded-full overflow-hidden">
                             <div className="h-full bg-purple-500" style={{ width: '30%' }}></div>
@@ -216,7 +300,7 @@ export default function ExpensesPage() {
                     <div className="space-y-1">
                         <div className="flex justify-between text-sm">
                             <span className="font-medium text-emerald-500 text-xs md:text-sm">Poupança/Dívidas (20%)</span>
-                            <span className="font-medium">R$ {totalSavings}</span>
+                            <span className="font-medium">R$ {totalSavings.toFixed(2).replace('.', ',')}</span>
                         </div>
                         <div className="h-2.5 w-full bg-muted rounded-full overflow-hidden">
                             <div className="h-full bg-emerald-500" style={{ width: '20%' }}></div>
@@ -302,6 +386,16 @@ export default function ExpensesPage() {
                             </div>
                         </div>
 
+                        <div className="flex items-center gap-2 pt-2 pb-1">
+                            <input
+                                type="checkbox"
+                                id="is_recurring"
+                                className="w-4 h-4 rounded border-border text-destructive focus:ring-destructive"
+                                {...register("is_recurring")}
+                            />
+                            <label htmlFor="is_recurring" className="text-sm text-foreground">Repetir todo mês (Ex: Assinatura)</label>
+                        </div>
+
                         <div className="flex gap-2 mt-4">
                             <button
                                 type="submit"
@@ -340,8 +434,10 @@ export default function ExpensesPage() {
                         ) : (
                             expenses.map((expense) => {
                                 const bucketInfo = getBucket(expense.category);
+                                const isCancelled = expense.is_recurring && expense.recurrence_end_date;
+
                                 return (
-                                    <div key={expense.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-background border border-border rounded-xl gap-3 hover:border-destructive/30 transition-colors group">
+                                    <div key={expense.id} className={cn("flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-background border rounded-xl gap-3 transition-colors group", expense.is_virtual ? "border-dashed border-muted-foreground/30 bg-muted/10 opacity-80" : "border-border hover:border-destructive/30")}>
                                         <div className="flex items-center gap-4">
                                             <div className="bg-destructive/10 p-2.5 rounded-full text-destructive">
                                                 <ArrowUpCircle className="w-6 h-6" />
@@ -352,6 +448,16 @@ export default function ExpensesPage() {
                                                     <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium bg-muted", bucketInfo.text)}>
                                                         {bucketInfo.name}
                                                     </span>
+                                                    {expense.is_virtual && (
+                                                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-500/10 text-purple-500 border border-purple-500/20">
+                                                            Mensal (Automático)
+                                                        </span>
+                                                    )}
+                                                    {(!expense.is_virtual && expense.is_recurring) && (
+                                                        <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-bold border", isCancelled ? "bg-muted text-muted-foreground border-transparent" : "bg-purple-500/10 text-purple-500 border-purple-500/20")}>
+                                                            {isCancelled ? "Assinatura Cancelada" : "Plano Recorrente"}
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                                                     <span className="flex items-center gap-1"><Tag className="w-3 h-3" />{expense.category}</span>
@@ -364,10 +470,17 @@ export default function ExpensesPage() {
                                                 - R$ {Number(expense.value).toFixed(2).replace('.', ',')}
                                             </div>
                                             <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                                                <button onClick={() => editExpense(expense)} className="p-2 text-muted-foreground hover:text-primary bg-muted/50 hover:bg-muted rounded-md transition-colors" title="Editar">
-                                                    <Edit2 className="w-4 h-4" />
-                                                </button>
-                                                <button onClick={() => deleteExpense(expense.id)} className="p-2 text-muted-foreground hover:text-destructive bg-muted/50 hover:bg-muted rounded-md transition-colors" title="Excluir">
+                                                {(!isCancelled && (expense.is_recurring || expense.is_virtual)) && (
+                                                    <button onClick={() => cancelRecurrence(expense.id, expense.is_virtual, expense.original_id)} className="p-2 text-muted-foreground hover:text-orange-500 bg-muted/50 hover:bg-muted rounded-md transition-colors" title="Cancelar Assinatura">
+                                                        <X className="w-4 h-4" />
+                                                    </button>
+                                                )}
+                                                {!expense.is_virtual && (
+                                                    <button onClick={() => editExpense(expense)} className="p-2 text-muted-foreground hover:text-primary bg-muted/50 hover:bg-muted rounded-md transition-colors" title="Editar">
+                                                        <Edit2 className="w-4 h-4" />
+                                                    </button>
+                                                )}
+                                                <button onClick={() => deleteExpense(expense.id, expense.is_virtual, expense.original_id)} className="p-2 text-muted-foreground hover:text-destructive bg-muted/50 hover:bg-muted rounded-md transition-colors" title="Excluir Lançamento">
                                                     <Trash2 className="w-4 h-4" />
                                                 </button>
                                             </div>
