@@ -75,10 +75,10 @@ export default function DashboardPage() {
 
             const [incomesRes, expensesRes, investmentsRes, pastIncomesRes, pastExpensesRes] = await Promise.all([
                 supabase.from('incomes').select('value, date').gte('date', startDateStr).lte('date', endDateStr),
-                supabase.from('expenses').select('value, category_type, date, is_recurring, recurrence_end_date').gte('date', startDateStr).lte('date', endDateStr),
+                supabase.from('expenses').select('value, category_type, date, is_recurring, recurrence_end_date, installments').gte('date', startDateStr).lte('date', endDateStr),
                 supabase.from('investments').select('value, date').gte('date', startDateStr).lte('date', endDateStr),
                 supabase.from('incomes').select('value').lt('date', startDateStr),
-                supabase.from('expenses').select('value, category_type, date, is_recurring, recurrence_end_date').lt('date', startDateStr)
+                supabase.from('expenses').select('value, category_type, date, is_recurring, recurrence_end_date, installments').lt('date', startDateStr)
             ]);
 
             let iSum = 0;
@@ -113,6 +113,9 @@ export default function DashboardPage() {
                             }
                         }
 
+                        let currentInstallment = 2;
+                        const maxInstallments = e.installments || 0;
+
                         while (
                             (loopDate.getFullYear() < endLimit.getFullYear()) ||
                             (loopDate.getFullYear() === endLimit.getFullYear() && loopDate.getMonth() <= endLimit.getMonth())
@@ -121,6 +124,7 @@ export default function DashboardPage() {
                                 const cancelDate = new Date(e.recurrence_end_date);
                                 if (loopDate > cancelDate) break;
                             }
+                            if (maxInstallments > 0 && currentInstallment > maxInstallments) break;
                             if (loopDate > now) break;
 
                             // Date boundary check for whether this virtual clone belongs in "past" or "current" bucket
@@ -135,6 +139,7 @@ export default function DashboardPage() {
                             }
 
                             loopDate.setMonth(loopDate.getMonth() + 1);
+                            currentInstallment++;
                         }
                     }
                 });

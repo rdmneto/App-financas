@@ -11,7 +11,8 @@ type ExpenseFormData = {
     date: string;
     description: string;
     category: string;
-    is_recurring: boolean;
+    recurrence_type: 'none' | 'recurring' | 'installment';
+    installments?: number;
 };
 
 // 50/30/20 Classification helper
@@ -35,6 +36,8 @@ type Expense = {
     recurrence_end_date?: string | null;
     is_virtual?: boolean;
     original_id?: string;
+    installments?: number;
+    current_installment?: number;
 };
 
 export default function ExpensesPage() {
@@ -43,8 +46,11 @@ export default function ExpensesPage() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const supabase = createClient();
+    const { register, handleSubmit, reset, watch } = useForm<ExpenseFormData>({
+        defaultValues: { recurrence_type: 'none' }
+    });
 
-    const { register, handleSubmit, reset } = useForm<ExpenseFormData>();
+    const watchRecurrenceType = watch("recurrence_type");
 
     useEffect(() => {
         async function loadExpenses() {
@@ -80,7 +86,9 @@ export default function ExpensesPage() {
                         category: originalCategory,
                         bucket: d.category_type,
                         is_recurring: d.is_recurring,
-                        recurrence_end_date: d.recurrence_end_date
+                        recurrence_end_date: d.recurrence_end_date,
+                        installments: d.installments,
+                        current_installment: 1
                     };
 
                     mappedData.push(baseExpense);
@@ -88,15 +96,11 @@ export default function ExpensesPage() {
                     // Generate virtual recurring expenses
                     if (d.is_recurring) {
                         const startDate = new Date(d.date);
-                        // Convert DB date safely assuming it was local when posted or UTC depending on how it was saved
-                        // It's safest to parse the exact YYYY-MM-DD string to avoid timezone shifts
                         const [yearStr, monthStr, dayStr] = d.date.split('-');
                         let loopDate = new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr.split('T')[0]));
 
-                        // Advance loopDate by 1 month to start generating copies
                         loopDate.setMonth(loopDate.getMonth() + 1);
 
-                        // Stop either at recurrence_end_date OR the current month (don't generate future months)
                         let endLimit = new Date(currentYear, currentMonth, loopDate.getDate());
                         if (d.recurrence_end_date) {
                             const [ey, em, ed] = d.recurrence_end_date.split('-');
@@ -106,18 +110,20 @@ export default function ExpensesPage() {
                             }
                         }
 
+                        let currentInstallment = 2;
+                        const maxInstallments = d.installments || 0; // 0 means infinite recurring
+
                         while (
                             (loopDate.getFullYear() < endLimit.getFullYear()) ||
                             (loopDate.getFullYear() === endLimit.getFullYear() && loopDate.getMonth() <= endLimit.getMonth())
                         ) {
-                            // If the endLimit is this exact month, make sure the day hasn't passed if we consider cancelDate EXACT.
-                            // But usually, monthly recurrence stops the month AFTER cancel. Let's just use month/year.
                             if (d.recurrence_end_date) {
                                 const cancelDate = new Date(d.recurrence_end_date);
                                 if (loopDate > cancelDate) break;
                             }
 
-                            if (loopDate > now) break; // Final safeguard against future projection
+                            if (maxInstallments > 0 && currentInstallment > maxInstallments) break;
+                            if (loopDate > now) break;
 
                             const virtualDateStr = `${loopDate.getFullYear()}-${String(loopDate.getMonth() + 1).padStart(2, '0')}-${String(loopDate.getDate()).padStart(2, '0')}`;
                             mappedData.push({
@@ -125,10 +131,12 @@ export default function ExpensesPage() {
                                 id: `${d.id}-virtual-${virtualDateStr}`,
                                 date: virtualDateStr,
                                 is_virtual: true,
-                                original_id: d.id
+                                original_id: d.id,
+                                current_installment: currentInstallment
                             });
 
                             loopDate.setMonth(loopDate.getMonth() + 1);
+                            currentInstallment++;
                         }
                     }
                 });
@@ -149,13 +157,17 @@ export default function ExpensesPage() {
 
         const bucketInfo = getBucket(data.category);
 
+        const isRecurring = data.recurrence_type !== 'none';
+        const installmentsValue = data.recurrence_type === 'installment' ? Number(data.installments) : null;
+
         const newExpenseRecord = {
             user_id: user.id,
             value: Number(data.value),
             date: data.date,
             description: `${data.category} - ${data.description}`,
             category_type: bucketInfo.name,
-            is_recurring: data.is_recurring || false
+            is_recurring: isRecurring,
+            installments: installmentsValue
         };
 
         const updateExpenseRecord: any = {
@@ -163,12 +175,13 @@ export default function ExpensesPage() {
             date: data.date,
             description: `${data.category} - ${data.description}`,
             category_type: bucketInfo.name,
-            is_recurring: data.is_recurring || false
+            is_recurring: isRecurring,
+            installments: installmentsValue
         };
 
         if (editingId) {
             // Se o usuário está (re)ativando a recorrência numa edição, limpamos o cancelamento
-            if (data.is_recurring) {
+            if (isRecurring) {
                 updateExpenseRecord.recurrence_end_date = null;
             }
 
@@ -207,19 +220,27 @@ export default function ExpensesPage() {
             return;
         }
         setEditingId(expense.id);
+
+        let recType: 'none' | 'recurring' | 'installment' = 'none';
+        if (expense.is_recurring) {
+            if (expense.installments && expense.installments > 0) recType = 'installment';
+            else recType = 'recurring';
+        }
+
         reset({
             description: expense.description,
             value: expense.value,
             date: expense.date,
             category: expense.category,
-            is_recurring: expense.is_recurring
+            recurrence_type: recType,
+            installments: expense.installments || undefined
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const cancelEdit = () => {
         setEditingId(null);
-        reset({ description: "", value: "" as any, date: "", category: "", is_recurring: false });
+        reset({ description: "", value: "" as any, date: "", category: "", recurrence_type: 'none', installments: undefined });
     };
 
     const deleteExpense = async (id: string, isVirtual?: boolean, originalId?: string) => {
@@ -399,15 +420,33 @@ export default function ExpensesPage() {
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2 pt-2 pb-1">
-                            <input
-                                type="checkbox"
-                                id="is_recurring"
-                                className="w-4 h-4 rounded border-border text-destructive focus:ring-destructive"
-                                {...register("is_recurring")}
-                            />
-                            <label htmlFor="is_recurring" className="text-sm text-foreground">Repetir todo mês (Ex: Assinatura)</label>
+                        <div className="space-y-2 pt-2 pb-1">
+                            <label className="text-sm font-medium text-foreground">Repetição</label>
+                            <div className="relative">
+                                <select
+                                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-destructive/50 appearance-none"
+                                    {...register("recurrence_type")}
+                                >
+                                    <option value="none">Apenas uma vez (Despesa Única)</option>
+                                    <option value="recurring">Assinatura Fixa (Repete todo mês)</option>
+                                    <option value="installment">Compra Parcelada (Com Limite)</option>
+                                </select>
+                            </div>
                         </div>
+
+                        {watchRecurrenceType === 'installment' && (
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-foreground">Número de Parcelas</label>
+                                <input
+                                    type="number"
+                                    min="2"
+                                    max="480"
+                                    placeholder="Ex: 12"
+                                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-destructive/50"
+                                    {...register("installments", { required: true, min: 2 })}
+                                />
+                            </div>
+                        )}
 
                         <div className="flex gap-2 mt-4">
                             <button
@@ -463,12 +502,12 @@ export default function ExpensesPage() {
                                                     </span>
                                                     {expense.is_virtual && (
                                                         <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-500/10 text-purple-500 border border-purple-500/20">
-                                                            Mensal (Automático)
+                                                            {expense.installments && expense.installments > 0 ? `Parcela ${expense.current_installment} de ${expense.installments}` : "Mensal (Automático)"}
                                                         </span>
                                                     )}
                                                     {(!expense.is_virtual && expense.is_recurring) && (
                                                         <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-bold border", isCancelled ? "bg-muted text-muted-foreground border-transparent" : "bg-purple-500/10 text-purple-500 border-purple-500/20")}>
-                                                            {isCancelled ? "Assinatura Cancelada" : "Plano Recorrente"}
+                                                            {isCancelled ? "Assinatura Cancelada" : (expense.installments && expense.installments > 0 ? `Parcela ${expense.current_installment} de ${expense.installments}` : "Plano Recorrente")}
                                                         </span>
                                                     )}
                                                 </div>
