@@ -183,7 +183,7 @@ export default function ExpensesPage() {
                 window.location.reload();
             } else {
                 console.error("Supabase Edit Error:", error);
-                alert("Erro ao atualizar despesa. Verifique o console.");
+                alert("Erro ao atualizar despesa: " + (error?.message || "Erro desconhecido"));
             }
         } else {
             const { data: insertedData, error } = await supabase
@@ -195,7 +195,7 @@ export default function ExpensesPage() {
                 window.location.reload();
             } else {
                 console.error("Supabase Insert Error:", error);
-                alert("Erro ao salvar despesa. Verifique o console.");
+                alert("Erro ao salvar despesa: " + (error?.message || "Erro desconhecido"));
             }
         }
         setIsSubmitting(false);
