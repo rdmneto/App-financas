@@ -160,24 +160,30 @@ export default function ExpensesPage() {
         const isRecurring = data.recurrence_type !== 'none';
         const installmentsValue = data.recurrence_type === 'installment' ? Number(data.installments) : null;
 
-        const newExpenseRecord = {
+        const newExpenseRecord: any = {
             user_id: user.id,
             value: Number(data.value),
             date: data.date,
             description: `${data.category} - ${data.description}`,
             category_type: bucketInfo.name,
-            is_recurring: isRecurring,
-            installments: installmentsValue
+            is_recurring: isRecurring
         };
+
+        if (installmentsValue !== null) {
+            newExpenseRecord.installments = installmentsValue;
+        }
 
         const updateExpenseRecord: any = {
             value: Number(data.value),
             date: data.date,
             description: `${data.category} - ${data.description}`,
             category_type: bucketInfo.name,
-            is_recurring: isRecurring,
-            installments: installmentsValue
+            is_recurring: isRecurring
         };
+
+        if (installmentsValue !== null) {
+            updateExpenseRecord.installments = installmentsValue;
+        }
 
         if (editingId) {
             // Se o usuário está (re)ativando a recorrência numa edição, limpamos o cancelamento
