@@ -158,15 +158,27 @@ export default function ExpensesPage() {
             is_recurring: data.is_recurring || false
         };
 
+        const updateExpenseRecord: any = {
+            value: Number(data.value),
+            date: data.date,
+            description: `${data.category} - ${data.description}`,
+            category_type: bucketInfo.name,
+            is_recurring: data.is_recurring || false
+        };
+
         if (editingId) {
+            // Se o usuário está (re)ativando a recorrência numa edição, limpamos o cancelamento
+            if (data.is_recurring) {
+                updateExpenseRecord.recurrence_end_date = null;
+            }
+
             const { data: updatedData, error } = await supabase
                 .from('expenses')
-                .update(newExpenseRecord)
+                .update(updateExpenseRecord)
                 .eq('id', editingId)
-                .select('*')
-                .single();
+                .select('*');
 
-            if (!error && updatedData) {
+            if (!error && updatedData && updatedData.length > 0) {
                 // To safely update the UI with complex virtuals, we reload the whole page list.
                 window.location.reload();
             } else {
