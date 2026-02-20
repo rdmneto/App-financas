@@ -109,7 +109,8 @@ export default function DashboardPage() {
                         let loopDate = new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr.split('T')[0]));
                         loopDate.setMonth(loopDate.getMonth() + 1);
 
-                        let endLimit = new Date(currentYear, currentMonth, loopDate.getDate());
+                        // Use the chart's 'endDate' to allow viewing future months properly
+                        let endLimit = new Date(endDate.getFullYear(), endDate.getMonth(), loopDate.getDate());
                         if (e.recurrence_end_date) {
                             const [ey, em, ed] = e.recurrence_end_date.split('-');
                             const cancelDate = new Date(Number(ey), Number(em) - 1, Number(ed.split('T')[0]));
@@ -131,23 +132,17 @@ export default function DashboardPage() {
                                 if (loopDate > cancelDate) break;
                             }
                             if (maxInstallments > 0 && currentInstallment > maxInstallments) break;
-                            if (loopDate > now) break;
 
-                            // Date boundary check for whether this virtual clone belongs in "past" or "current" bucket
                             // Construct a localized YYYY-MM-DD string to match Supabase's format
                             const vYear = loopDate.getFullYear();
                             const vMonth = String(loopDate.getMonth() + 1).padStart(2, '0');
                             const vDay = String(loopDate.getDate()).padStart(2, '0');
                             const virtualDateStr = `${vYear}-${vMonth}-${vDay}T00:00:00`;
 
-                            if (isPastList) {
-                                if (loopDate < startDate) {
-                                    processed.push({ ...e, date: virtualDateStr });
-                                }
-                            } else {
-                                if (loopDate >= startDate && loopDate <= endDate) {
-                                    processed.push({ ...e, date: virtualDateStr });
-                                }
+                            // Push any virtual clones up to the chart's endDate.
+                            // Partitions between 'past' and 'current' bins happen after this loop returns.
+                            if (loopDate <= endDate) {
+                                processed.push({ ...e, date: virtualDateStr });
                             }
 
                             loopDate.setMonth(loopDate.getMonth() + 1);
