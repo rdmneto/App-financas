@@ -35,6 +35,7 @@ export default function DashboardPage() {
     const [totalIncomes, setTotalIncomes] = useState(0);
     const [totalExpenses, setTotalExpenses] = useState(0);
     const [totalInvestments, setTotalInvestments] = useState(0);
+    const [previousBalance, setPreviousBalance] = useState(0);
 
     // Expenses Pie Chart States
     const [essentialsSum, setEssentialsSum] = useState(0);
@@ -72,10 +73,12 @@ export default function DashboardPage() {
             const startDateStr = startDate.toISOString();
             const endDateStr = endDate.toISOString();
 
-            const [incomesRes, expensesRes, investmentsRes] = await Promise.all([
+            const [incomesRes, expensesRes, investmentsRes, pastIncomesRes, pastExpensesRes] = await Promise.all([
                 supabase.from('incomes').select('value, date').gte('date', startDateStr).lte('date', endDateStr),
                 supabase.from('expenses').select('value, category_type, date').gte('date', startDateStr).lte('date', endDateStr),
-                supabase.from('investments').select('value, date').gte('date', startDateStr).lte('date', endDateStr)
+                supabase.from('investments').select('value, date').gte('date', startDateStr).lte('date', endDateStr),
+                supabase.from('incomes').select('value').lt('date', startDateStr),
+                supabase.from('expenses').select('value').lt('date', startDateStr)
             ]);
 
             let iSum = 0;
@@ -99,6 +102,15 @@ export default function DashboardPage() {
 
             let invSum = 0;
             if (investmentsRes.data) invSum = investmentsRes.data.reduce((acc, curr) => acc + curr.value, 0);
+
+            let pastIncomesSum = 0;
+            if (pastIncomesRes.data) pastIncomesSum = pastIncomesRes.data.reduce((acc, curr) => acc + curr.value, 0);
+
+            let pastExpensesSum = 0;
+            if (pastExpensesRes.data) pastExpensesSum = pastExpensesRes.data.reduce((acc, curr) => acc + curr.value, 0);
+
+            const initialBalance = pastIncomesSum - pastExpensesSum;
+            setPreviousBalance(initialBalance);
 
             setTotalIncomes(iSum);
             setTotalExpenses(eSum);
@@ -150,7 +162,7 @@ export default function DashboardPage() {
             });
 
             // Make it cumulative to behave like true Evolution scale graph
-            let runningBalance = 0;
+            let runningBalance = initialBalance;
 
             const currentDayIndex = now.getDay();
             const currentDateIndex = now.getDate() - 1;
@@ -183,7 +195,7 @@ export default function DashboardPage() {
     }, [filter, offset]); // re-fetch / re-aggregate when filter or offset changes
 
     // Compute dynamic dashboard structure
-    const currentBalance = totalIncomes - totalExpenses;
+    const currentBalance = previousBalance + totalIncomes - totalExpenses;
     const formatBRL = (val: number) => `R$ ${val.toFixed(2).replace('.', ',')}`;
 
     const summaryData = [
