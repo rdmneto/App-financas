@@ -24,6 +24,7 @@ import { useEffect } from "react";
 type TimeFilter = "semana" | "mes" | "ano";
 
 export default function DashboardPage() {
+    const [isMounted, setIsMounted] = useState(false);
     const [filter, setFilter] = useState<TimeFilter>("mes");
     const [offset, setOffset] = useState(0); // 0 = current, -1 = previous, +1 = next...
     const [isLoading, setIsLoading] = useState(true);
@@ -41,6 +42,10 @@ export default function DashboardPage() {
     const [essentialsSum, setEssentialsSum] = useState(0);
     const [lifestyleSum, setLifestyleSum] = useState(0);
     const [savingsSum, setSavingsSum] = useState(0);
+
+    useEffect(() => {
+        setIsMounted(true);
+    }, []);
 
     useEffect(() => {
         async function fetchDashboardData() {
@@ -74,11 +79,11 @@ export default function DashboardPage() {
             const endDateStr = endDate.toISOString();
 
             const [incomesRes, expensesRes, investmentsRes, pastIncomesRes, pastExpensesRes] = await Promise.all([
-                supabase.from('incomes').select('value, date').gte('date', startDateStr).lte('date', endDateStr),
-                supabase.from('expenses').select('value, category_type, date, is_recurring, recurrence_end_date, installments').gte('date', startDateStr).lte('date', endDateStr),
-                supabase.from('investments').select('value, date').gte('date', startDateStr).lte('date', endDateStr),
-                supabase.from('incomes').select('value').lt('date', startDateStr),
-                supabase.from('expenses').select('value, category_type, date, is_recurring, recurrence_end_date, installments').lt('date', startDateStr)
+                supabase.from('incomes').select('*').gte('date', startDateStr).lte('date', endDateStr),
+                supabase.from('expenses').select('*').gte('date', startDateStr).lte('date', endDateStr),
+                supabase.from('investments').select('*').gte('date', startDateStr).lte('date', endDateStr),
+                supabase.from('incomes').select('*').lt('date', startDateStr),
+                supabase.from('expenses').select('*').lt('date', startDateStr)
             ]);
 
             let iSum = 0;
@@ -173,6 +178,12 @@ export default function DashboardPage() {
 
             let invSum = 0;
             if (investmentsRes.data) invSum = investmentsRes.data.reduce((acc, curr) => acc + curr.value, 0);
+
+            // Fetch past investments to include in the total applications summary
+            const { data: pastInvestmentsData } = await supabase.from('investments').select('value').lt('date', startDateStr);
+            if (pastInvestmentsData) {
+                invSum += pastInvestmentsData.reduce((acc, curr) => acc + curr.value, 0);
+            }
 
             let pastIncomesSum = 0;
             if (pastIncomesRes.data) pastIncomesSum = pastIncomesRes.data.reduce((acc, curr) => acc + curr.value, 0);
@@ -287,6 +298,10 @@ export default function DashboardPage() {
         if (value >= 1000) return `R$ ${(value / 1000).toFixed(1)}k`;
         return `R$ ${value}`;
     };
+
+    if (!isMounted) {
+        return <div className="p-4 md:p-8 space-y-6 max-w-6xl mx-auto opacity-0" />;
+    }
 
     return (
         <div className="p-4 md:p-8 space-y-6 max-w-6xl mx-auto">

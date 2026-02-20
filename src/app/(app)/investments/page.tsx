@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
-import { TrendingUp, Plus, Calendar, DollarSign, Target, FileText, Loader2 } from "lucide-react";
+import { TrendingUp, Plus, Calendar, DollarSign, Target, FileText, Loader2, Edit2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/utils/supabase/client";
 
@@ -33,6 +33,8 @@ export default function InvestmentsPage() {
 
     const { register, handleSubmit, reset } = useForm<InvestmentFormData>();
 
+    const [editingId, setEditingId] = useState<string | null>(null);
+
     useEffect(() => {
         async function loadInvestments() {
             const { data: { user } } = await supabase.auth.getUser();
@@ -46,11 +48,11 @@ export default function InvestmentsPage() {
             if (!error && data) {
                 const mappedData = data.map((d: any) => ({
                     id: d.id,
-                    goalName: d.goal_name,
+                    goalName: d.goal_name.replace("Meta: ", ""), // Strip prefix for cleaner edit
                     value: d.value,
                     date: d.date,
-                    progress: 0, // In a real app we would compute progress against transactions
-                    target: d.value * 5, // Mock target based on value like before
+                    progress: 0,
+                    target: d.value * 5,
                     yieldRate: d.yield_rate,
                     isAutoCorrecting: d.is_auto_correcting
                 }));
@@ -66,7 +68,7 @@ export default function InvestmentsPage() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
-        const newInvestment = {
+        const investmentData = {
             user_id: user.id,
             goal_name: "Meta: " + data.goalName,
             value: Number(data.value),
@@ -75,29 +77,85 @@ export default function InvestmentsPage() {
             is_auto_correcting: !!data.isAutoCorrecting,
         };
 
-        const { data: insertedData, error } = await supabase
-            .from('investments')
-            .insert(newInvestment)
-            .select('*')
-            .single();
+        if (editingId) {
+            const { data: updatedData, error } = await supabase
+                .from('investments')
+                .update(investmentData)
+                .eq('id', editingId)
+                .select('*')
+                .single();
 
-        if (!error && insertedData) {
-            const newMappedInv = {
-                id: insertedData.id,
-                goalName: insertedData.goal_name,
-                value: insertedData.value,
-                date: insertedData.date,
-                progress: 0,
-                target: insertedData.value * 5,
-                yieldRate: insertedData.yield_rate,
-                isAutoCorrecting: insertedData.is_auto_correcting
-            };
-            setInvestments([newMappedInv, ...investments]);
-            reset();
+            if (!error && updatedData) {
+                const updatedMapped = {
+                    id: updatedData.id,
+                    goalName: updatedData.goal_name.replace("Meta: ", ""),
+                    value: updatedData.value,
+                    date: updatedData.date,
+                    progress: 0,
+                    target: updatedData.value * 5,
+                    yieldRate: updatedData.yield_rate,
+                    isAutoCorrecting: updatedData.is_auto_correcting
+                };
+                setInvestments(investments.map(inv => inv.id === editingId ? updatedMapped : inv));
+                cancelEdit();
+            } else {
+                alert("Erro ao editar aplicação.");
+            }
         } else {
-            alert("Erro ao salvar aplicação.");
+            const { data: insertedData, error } = await supabase
+                .from('investments')
+                .insert(investmentData)
+                .select('*')
+                .single();
+
+            if (!error && insertedData) {
+                const newMappedInv = {
+                    id: insertedData.id,
+                    goalName: insertedData.goal_name.replace("Meta: ", ""),
+                    value: insertedData.value,
+                    date: insertedData.date,
+                    progress: 0,
+                    target: insertedData.value * 5,
+                    yieldRate: insertedData.yield_rate,
+                    isAutoCorrecting: insertedData.is_auto_correcting
+                };
+                setInvestments([newMappedInv, ...investments]);
+                reset();
+            } else {
+                alert("Erro ao salvar aplicação.");
+            }
         }
         setIsSubmitting(false);
+    };
+
+    const editInvestment = (inv: Investment) => {
+        setEditingId(inv.id);
+        reset({
+            goalName: inv.goalName,
+            value: inv.value,
+            date: inv.date.split('T')[0],
+            yieldRate: inv.yieldRate || undefined,
+            isAutoCorrecting: inv.isAutoCorrecting
+        });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const cancelEdit = () => {
+        setEditingId(null);
+        reset({ goalName: "", value: undefined, date: "", yieldRate: undefined, isAutoCorrecting: false });
+    };
+
+    const deleteInvestment = async (id: string) => {
+        if (!confirm("Tem certeza que deseja excluir esta aplicação?")) return;
+
+        setIsLoading(true);
+        const { error } = await supabase.from('investments').delete().eq('id', id);
+        if (!error) {
+            setInvestments(investments.filter(i => i.id !== id));
+        } else {
+            alert("Erro ao excluir aplicação.");
+        }
+        setIsLoading(false);
     };
 
     return (
@@ -116,7 +174,7 @@ export default function InvestmentsPage() {
                 {/* Form elements */}
                 <div className="lg:col-span-1 bg-card border border-border rounded-xl p-6 shadow-sm h-fit">
                     <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                        <Plus className="w-5 h-5 text-primary" /> Nova Aplicação
+                        <Plus className="w-5 h-5 text-primary" /> {editingId ? "Editar Aplicação" : "Nova Aplicação"}
                     </h2>
                     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
 
@@ -185,13 +243,24 @@ export default function InvestmentsPage() {
                             </label>
                         </div>
 
-                        <button
-                            type="submit"
-                            disabled={isSubmitting}
-                            className="w-full bg-primary text-primary-foreground font-semibold py-2.5 rounded-lg flex items-center justify-center gap-2 hover:bg-primary/90 transition-all mt-4 disabled:opacity-70"
-                        >
-                            {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><TrendingUp className="w-5 h-5" /> Registrar Aplicação</>}
-                        </button>
+                        <div className="flex gap-2 mt-4">
+                            <button
+                                type="submit"
+                                disabled={isSubmitting}
+                                className="flex-1 bg-primary text-primary-foreground font-semibold py-2.5 rounded-lg flex items-center justify-center gap-2 hover:bg-primary/90 transition-all disabled:opacity-70"
+                            >
+                                {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : editingId ? "Atualizar" : <><TrendingUp className="w-5 h-5" /> Registrar</>}
+                            </button>
+                            {editingId && (
+                                <button
+                                    type="button"
+                                    onClick={cancelEdit}
+                                    className="px-4 bg-muted text-muted-foreground hover:text-foreground font-semibold rounded-lg flex items-center justify-center hover:bg-muted/80 transition-all border border-border"
+                                >
+                                    Cancelar
+                                </button>
+                            )}
+                        </div>
                     </form>
                 </div>
 
@@ -212,7 +281,7 @@ export default function InvestmentsPage() {
                                 </div>
                             ) : (
                                 investments.map((inv) => (
-                                    <div key={inv.id} className="p-4 bg-background border border-border rounded-xl hover:border-primary/30 transition-colors">
+                                    <div key={inv.id} className="p-4 bg-background border border-border rounded-xl hover:border-primary/30 transition-colors group">
                                         <div className="flex justify-between items-start mb-2">
                                             <div className="flex items-center gap-3">
                                                 <div className="bg-primary/10 p-2 rounded-full text-primary">
@@ -226,7 +295,7 @@ export default function InvestmentsPage() {
                                                     Aplicado em {new Date(inv.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
                                                 </p>
                                                 <div className="mt-1 flex flex-col items-end gap-1">
-                                                    {inv.yieldRate !== undefined && inv.yieldRate > 0 && (
+                                                    {inv.yieldRate !== undefined && inv.yieldRate !== null && inv.yieldRate > 0 && (
                                                         <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-muted text-foreground">
                                                             Rende {inv.yieldRate}% am
                                                         </span>
@@ -245,12 +314,21 @@ export default function InvestmentsPage() {
                                                 <span className="text-muted-foreground font-medium">Progresso ({inv.progress}%)</span>
                                                 <span className="text-muted-foreground font-medium">Meta: R$ {Number(inv.target).toFixed(2).replace('.', ',')}</span>
                                             </div>
-                                            <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                                            <div className="h-2 w-full bg-muted rounded-full overflow-hidden mb-3">
                                                 <div
                                                     className="h-full bg-primary rounded-full"
                                                     style={{ width: `${Math.min(inv.progress, 100)}%` }}
                                                 />
                                             </div>
+                                        </div>
+
+                                        <div className="flex justify-end gap-2 pt-2 mt-2 border-t border-border/50">
+                                            <button onClick={() => editInvestment(inv)} className="text-sm px-3 py-1.5 flex items-center gap-1.5 text-muted-foreground hover:text-primary bg-muted/50 hover:bg-muted rounded-md transition-colors" title="Editar">
+                                                <Edit2 className="w-4 h-4" /> Editar
+                                            </button>
+                                            <button onClick={() => deleteInvestment(inv.id)} className="text-sm px-3 py-1.5 flex items-center gap-1.5 text-muted-foreground hover:text-destructive bg-muted/50 hover:bg-muted rounded-md transition-colors" title="Excluir Lançamento">
+                                                <Trash2 className="w-4 h-4" /> Excluir
+                                            </button>
                                         </div>
                                     </div>
                                 ))

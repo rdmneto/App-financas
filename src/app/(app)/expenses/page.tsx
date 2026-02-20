@@ -221,25 +221,34 @@ export default function ExpensesPage() {
     };
 
     const editExpense = (expense: Expense) => {
+        let targetExpenseToEdit = expense;
+
         if (expense.is_virtual) {
-            alert("Não é possível editar uma ocorrência mensal repetida. Edite o lançamento original.");
-            return;
+            // Find the original expense to edit when a virtual recurring item is clicked
+            const original = expenses.find(e => e.id === expense.original_id);
+            if (original) {
+                targetExpenseToEdit = original;
+            } else {
+                alert("Lançamento original não encontrado para edição.");
+                return;
+            }
         }
-        setEditingId(expense.id);
+
+        setEditingId(targetExpenseToEdit.id);
 
         let recType: 'none' | 'recurring' | 'installment' = 'none';
-        if (expense.is_recurring) {
-            if (expense.installments && expense.installments > 0) recType = 'installment';
+        if (targetExpenseToEdit.is_recurring) {
+            if (targetExpenseToEdit.installments && targetExpenseToEdit.installments > 0) recType = 'installment';
             else recType = 'recurring';
         }
 
         reset({
-            description: expense.description,
-            value: expense.value,
-            date: expense.date,
-            category: expense.category,
+            description: targetExpenseToEdit.description,
+            value: targetExpenseToEdit.value,
+            date: targetExpenseToEdit.date.split('T')[0],
+            category: targetExpenseToEdit.category,
             recurrence_type: recType,
-            installments: expense.installments || undefined
+            installments: targetExpenseToEdit.installments || undefined
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
