@@ -28,7 +28,7 @@ export default function DashboardPage() {
     const [filter, setFilter] = useState<TimeFilter>("mes");
     const [offset, setOffset] = useState(0); // 0 = current, -1 = previous, +1 = next...
     const [isLoading, setIsLoading] = useState(true);
-    const [historyData, setHistoryData] = useState<{ name: string; balance: number }[]>([]);
+    const [historyData, setHistoryData] = useState<{ name: string; balance: number; incomes: number; expenses: number; investments: number }[]>([]);
     const [timeLabel, setTimeLabel] = useState("");
     const supabase = createClient();
 
@@ -205,23 +205,23 @@ export default function DashboardPage() {
             setSavingsSum(savSum);
 
             // Build Data History Bins for the Dashboard Chart
-            let bins: { name: string; balance: number }[] = [];
+            let bins: { name: string; balance: number; incomes: number; expenses: number; investments: number }[] = [];
             let label = "";
             let startOfPeriod = new Date(startDateStr);
             startOfPeriod.setTime(startOfPeriod.getTime() + startOfPeriod.getTimezoneOffset() * 60000); // adjust pseudo UTC to local for labels
 
             if (filter === "semana") {
                 const days = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-                bins = days.map((name) => ({ name, balance: 0 }));
+                bins = days.map((name) => ({ name, balance: 0, incomes: 0, expenses: 0, investments: 0 }));
                 label = `Semana de ${startOfPeriod.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}`;
             } else if (filter === "mes") {
                 const daysInMonth = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0).getDate();
-                bins = Array.from({ length: daysInMonth }, (_, i) => ({ name: (i + 1).toString(), balance: 0 }));
+                bins = Array.from({ length: daysInMonth }, (_, i) => ({ name: (i + 1).toString(), balance: 0, incomes: 0, expenses: 0, investments: 0 }));
                 label = startOfPeriod.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
                 label = label.charAt(0).toUpperCase() + label.slice(1);
             } else {
                 const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-                bins = months.map((name) => ({ name, balance: 0 }));
+                bins = months.map((name) => ({ name, balance: 0, incomes: 0, expenses: 0, investments: 0 }));
                 label = `Ano ${startOfPeriod.getFullYear()}`;
             }
 
@@ -231,17 +231,26 @@ export default function DashboardPage() {
             incomesData.forEach(income => {
                 const [year, month, day] = income.date.split('-');
                 const d = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
-                if (filter === "semana") bins[d.getDay()].balance += income.value;
-                if (filter === "mes") bins[d.getDate() - 1].balance += income.value;
-                if (filter === "ano") bins[d.getMonth()].balance += income.value;
+                if (filter === "semana") { bins[d.getDay()].balance += income.value; bins[d.getDay()].incomes += income.value; }
+                if (filter === "mes") { bins[d.getDate() - 1].balance += income.value; bins[d.getDate() - 1].incomes += income.value; }
+                if (filter === "ano") { bins[d.getMonth()].balance += income.value; bins[d.getMonth()].incomes += income.value; }
             });
 
             processedExpensesData.forEach(expense => {
                 const [year, month, day] = expense.date.split('-');
                 const d = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
-                if (filter === "semana") bins[d.getDay()].balance -= expense.value;
-                if (filter === "mes") bins[d.getDate() - 1].balance -= expense.value;
-                if (filter === "ano") bins[d.getMonth()].balance -= expense.value;
+                if (filter === "semana") { bins[d.getDay()].balance -= expense.value; bins[d.getDay()].expenses += expense.value; }
+                if (filter === "mes") { bins[d.getDate() - 1].balance -= expense.value; bins[d.getDate() - 1].expenses += expense.value; }
+                if (filter === "ano") { bins[d.getMonth()].balance -= expense.value; bins[d.getMonth()].expenses += expense.value; }
+            });
+
+            const investmentsData = investmentsRes.data || [];
+            investmentsData.forEach(inv => {
+                const [year, month, day] = inv.date.split('-');
+                const d = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
+                if (filter === "semana") bins[d.getDay()].investments += inv.value;
+                if (filter === "mes") bins[d.getDate() - 1].investments += inv.value;
+                if (filter === "ano") bins[d.getMonth()].investments += inv.value;
             });
 
             // Make it cumulative to behave like true Evolution scale graph
@@ -413,9 +422,22 @@ export default function DashboardPage() {
                                 <RechartsTooltip
                                     cursor={{ fill: 'var(--muted)' }}
                                     contentStyle={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)', borderRadius: '8px' }}
-                                    formatter={(value: any) => [`R$ ${Number(value || 0).toFixed(2).replace('.', ',')}`, "Saldo"]}
+                                    formatter={(value: any, name: string | undefined) => {
+                                        const formattedValue = `R$ ${Number(value || 0).toFixed(2).replace('.', ',')}`;
+                                        const safeName = name || "";
+                                        const labels: Record<string, string> = {
+                                            balance: "Evolução (Saldo)",
+                                            incomes: "Receitas",
+                                            expenses: "Despesas",
+                                            investments: "Aplicações"
+                                        };
+                                        return [formattedValue, labels[safeName] || safeName];
+                                    }}
                                 />
-                                <Bar dataKey="balance" fill="var(--primary)" radius={[4, 4, 0, 0]} maxBarSize={50} />
+                                <Bar dataKey="incomes" name="incomes" fill="var(--success)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                                <Bar dataKey="expenses" name="expenses" fill="var(--destructive)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                                <Bar dataKey="investments" name="investments" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                                <Bar dataKey="balance" name="balance" fill="#eab308" radius={[4, 4, 0, 0]} maxBarSize={40} />
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
