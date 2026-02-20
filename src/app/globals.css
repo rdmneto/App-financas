@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  
+  --primary: #10b981; /* Emerald 500 */
+  --primary-foreground: #ffffff;
+  
+  --secondary: #e2e8f0; /* Slate 200 */
+  --secondary-foreground: #1e293b;
+
+  --success: #22c55e;
+  --success-foreground: #ffffff;
+  
+  --destructive: #ef4444; 
+  --destructive-foreground: #ffffff;
+
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+
+  --border: #e2e8f0;
+  
+  /* 50/30/20 Categories Colors */
+  --chart-essential: #3b82f6; /* Blue */
+  --chart-lifestyle: #8b5cf6; /* Violet */
+  --chart-savings: #10b981; /* Emerald */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-border: var(--border);
+  
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #020617; /* Slate 950 */
+    --foreground: #f8fafc;
+    
+    --primary: #10b981;
+    --primary-foreground: #ffffff;
+    
+    --secondary: #1e293b;
+    --secondary-foreground: #f8fafc;
+    
+    --success: #22c55e;
+    --success-foreground: #ffffff;
+    
+    --destructive: #ef4444;
+    --destructive-foreground: #ffffff;
+
+    --muted: #0f172a;
+    --muted-foreground: #94a3b8;
+    
+    --card: #0f172a;
+    --card-foreground: #f8fafc;
+
+    --border: #1e293b;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  @apply antialiased;
+}
