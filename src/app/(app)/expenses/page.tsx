@@ -178,23 +178,24 @@ export default function ExpensesPage() {
                 .eq('id', editingId)
                 .select('*');
 
-            if (!error && updatedData && updatedData.length > 0) {
+            if (!error) {
                 // To safely update the UI with complex virtuals, we reload the whole page list.
                 window.location.reload();
             } else {
-                alert("Erro ao atualizar despesa.");
+                console.error("Supabase Edit Error:", error);
+                alert("Erro ao atualizar despesa. Verifique o console.");
             }
         } else {
             const { data: insertedData, error } = await supabase
                 .from('expenses')
                 .insert(newExpenseRecord)
-                .select('*')
-                .single();
+                .select('*');
 
-            if (!error && insertedData) {
+            if (!error) {
                 window.location.reload();
             } else {
-                alert("Erro ao salvar despesa.");
+                console.error("Supabase Insert Error:", error);
+                alert("Erro ao salvar despesa. Verifique o console.");
             }
         }
         setIsSubmitting(false);
