@@ -126,20 +126,27 @@ export default function DashboardPage() {
                             (loopDate.getFullYear() === endLimit.getFullYear() && loopDate.getMonth() <= endLimit.getMonth())
                         ) {
                             if (e.recurrence_end_date) {
-                                const cancelDate = new Date(e.recurrence_end_date);
+                                const [cy, cm, cd] = e.recurrence_end_date.split('-');
+                                const cancelDate = new Date(Number(cy), Number(cm) - 1, Number(cd.split('T')[0]));
                                 if (loopDate > cancelDate) break;
                             }
                             if (maxInstallments > 0 && currentInstallment > maxInstallments) break;
                             if (loopDate > now) break;
 
                             // Date boundary check for whether this virtual clone belongs in "past" or "current" bucket
+                            // Construct a localized YYYY-MM-DD string to match Supabase's format
+                            const vYear = loopDate.getFullYear();
+                            const vMonth = String(loopDate.getMonth() + 1).padStart(2, '0');
+                            const vDay = String(loopDate.getDate()).padStart(2, '0');
+                            const virtualDateStr = `${vYear}-${vMonth}-${vDay}T00:00:00`;
+
                             if (isPastList) {
                                 if (loopDate < startDate) {
-                                    processed.push({ ...e, date: loopDate.toISOString() });
+                                    processed.push({ ...e, date: virtualDateStr });
                                 }
                             } else {
                                 if (loopDate >= startDate && loopDate <= endDate) {
-                                    processed.push({ ...e, date: loopDate.toISOString() });
+                                    processed.push({ ...e, date: virtualDateStr });
                                 }
                             }
 
@@ -158,7 +165,9 @@ export default function DashboardPage() {
             // We need to move those from processedPastExpensesData to processedExpensesData
             const finalPastExpenses: any[] = [];
             processedPastExpensesData.forEach(e => {
-                const eDate = new Date(e.date);
+                const [year, month, day] = e.date.split('-');
+                const eDate = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
+                // adjust pseudo local comparison logic since startDate/endDate are native local Date objects
                 if (eDate >= startDate && eDate <= endDate) {
                     processedExpensesData.push(e);
                 } else if (eDate < startDate) {
