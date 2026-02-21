@@ -17,8 +17,8 @@ type ExpenseFormData = {
 
 // 50/30/20 Classification helper
 const getBucket = (category: string) => {
-    const essentials = ["Alimentação", "Moradia", "Saúde", "Transporte", "Educação"];
-    const lifestyle = ["Lazer", "Cuidados Pessoais", "Compras", "Assinaturas"];
+    const essentials = ["Alimentação", "Moradia", "Saúde", "Transporte", "Educação", "Contas Básicas", "Seguros", "Impostos e Taxas", "Farmácia", "Manutenção do Lar", "Vestuário Básico", "Outro (Essencial)"];
+    const lifestyle = ["Lazer", "Cuidados Pessoais", "Compras", "Assinaturas", "Viagens", "Restaurantes", "Streaming", "Hobbies", "Academia/Esportes", "Pets", "Presentes", "Eventos e Festas", "Delivery", "Beleza e Estética", "Outro (Estilo de Vida)"];
 
     if (essentials.includes(category)) return { name: "Essenciais", color: "bg-blue-500", text: "text-blue-500", limit: "50%" };
     if (lifestyle.includes(category)) return { name: "Estilo de Vida", color: "bg-purple-500", text: "text-purple-500", limit: "30%" };
@@ -407,16 +407,35 @@ export default function ExpensesPage() {
                                         <option value="Saúde">Saúde</option>
                                         <option value="Transporte">Transporte</option>
                                         <option value="Educação">Educação</option>
+                                        <option value="Contas Básicas">Contas Básicas</option>
+                                        <option value="Seguros">Seguros</option>
+                                        <option value="Impostos e Taxas">Impostos e Taxas</option>
+                                        <option value="Farmácia">Farmácia</option>
+                                        <option value="Manutenção do Lar">Manutenção do Lar</option>
+                                        <option value="Vestuário Básico">Vestuário Básico</option>
+                                        <option value="Outro (Essencial)">Outro</option>
                                     </optgroup>
                                     <optgroup label="Estilo de Vida (30%)">
                                         <option value="Lazer">Lazer</option>
                                         <option value="Cuidados Pessoais">Cuidados Pessoais</option>
                                         <option value="Compras">Compras</option>
                                         <option value="Assinaturas">Assinaturas</option>
+                                        <option value="Viagens">Viagens</option>
+                                        <option value="Restaurantes">Restaurantes</option>
+                                        <option value="Streaming">Streaming</option>
+                                        <option value="Hobbies">Hobbies</option>
+                                        <option value="Academia/Esportes">Academia/Esportes</option>
+                                        <option value="Pets">Pets</option>
+                                        <option value="Presentes">Presentes</option>
+                                        <option value="Eventos e Festas">Eventos e Festas</option>
+                                        <option value="Delivery">Delivery</option>
+                                        <option value="Beleza e Estética">Beleza e Estética</option>
+                                        <option value="Outro (Estilo de Vida)">Outro</option>
                                     </optgroup>
                                     <optgroup label="Poupança/Dívidas (20%)">
                                         <option value="Dívidas">Quitação de Dívidas</option>
                                         <option value="Reserva">Reserva de Emergência</option>
+                                        <option value="Outro (Poupança)">Outro</option>
                                     </optgroup>
                                 </select>
                             </div>

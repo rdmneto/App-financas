@@ -75,8 +75,10 @@ export default function DashboardPage() {
                 endDate.setHours(23, 59, 59, 999);
             }
 
-            const startDateStr = startDate.toISOString();
-            const endDateStr = endDate.toISOString();
+            // Use YYYY-MM-DD format to avoid UTC timezone shift issues
+            const pad = (n: number) => String(n).padStart(2, '0');
+            const startDateStr = `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}`;
+            const endDateStr = `${endDate.getFullYear()}-${pad(endDate.getMonth() + 1)}-${pad(endDate.getDate())}`;
 
             const [incomesRes, expensesRes, investmentsRes, pastIncomesRes, pastExpensesRes] = await Promise.all([
                 supabase.from('incomes').select('*').gte('date', startDateStr).lte('date', endDateStr),
@@ -211,8 +213,7 @@ export default function DashboardPage() {
             // Build Data History Bins for the Dashboard Chart
             let bins: { name: string; balance: number; incomes: number; expenses: number; investments: number }[] = [];
             let label = "";
-            let startOfPeriod = new Date(startDateStr);
-            startOfPeriod.setTime(startOfPeriod.getTime() + startOfPeriod.getTimezoneOffset() * 60000); // adjust pseudo UTC to local for labels
+            let startOfPeriod = new Date(startDate.getTime()); // copy local startDate for labels
 
             if (filter === "semana") {
                 const days = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
