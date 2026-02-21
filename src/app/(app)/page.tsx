@@ -173,7 +173,20 @@ export default function DashboardPage() {
             });
 
 
-            processedExpensesData.forEach(e => {
+            // For the current period (offset=0), filter out expenses with dates after today
+            // so that virtual recurring charges for future months don't inflate the totals.
+            const today = new Date();
+            today.setHours(23, 59, 59, 999);
+            const expensesForTotals = (offset >= 0)
+                ? processedExpensesData.filter(e => {
+                    const [year, month, day] = e.date.split('-');
+                    const eDate = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
+                    if (offset > 0) return false; // Future period — no totals
+                    return eDate <= today;
+                })
+                : processedExpensesData;
+
+            expensesForTotals.forEach(e => {
                 eSum += e.value;
                 if (e.category_type === 'Essenciais') essSum += e.value;
                 else if (e.category_type === 'Estilo de Vida') lifeSum += e.value;
