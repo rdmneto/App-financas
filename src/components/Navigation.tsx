@@ -8,6 +8,7 @@ import {
     ArrowUpCircle,
     TrendingUp,
     User,
+    FileUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +17,7 @@ const NAV_ITEMS = [
     { href: "/incomes", label: "Receitas", icon: ArrowDownCircle },
     { href: "/expenses", label: "Despesas", icon: ArrowUpCircle },
     { href: "/investments", label: "Aplicações", icon: TrendingUp },
+    { href: "/import", label: "Importar", icon: FileUp },
     { href: "/profile", label: "Perfil", icon: User },
 ];
 

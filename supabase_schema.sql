@@ -24,6 +24,9 @@ create table public.expenses (
   date timestamp with time zone not null,
   description text not null,
   category_type text not null check (category_type in ('Essenciais', 'Estilo de Vida', 'Poupança')),
+  is_recurring boolean default false,
+  installments integer,
+  recurrence_end_date timestamp with time zone,
   created_at timestamp with time zone default now()
 );
 
