@@ -150,8 +150,8 @@ export async function parsePDF(file: File): Promise<Transaction[]> {
     // Dynamic import so Next.js doesn't try to SSR pdfjs
     const pdfjsLib = await import('pdfjs-dist');
 
-    // Set the worker source to the CDN version to avoid bundling issues
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+    // Set the worker source to the jsdelivr CDN version to avoid bundling issues
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
