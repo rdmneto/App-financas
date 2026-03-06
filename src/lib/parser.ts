@@ -160,9 +160,27 @@ export async function parsePDF(file: File): Promise<Transaction[]> {
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
-        const pageText = textContent.items
-            .map((item: any) => item.str)
-            .join(' ');
+
+        let pageText = '';
+        let lastY = -1;
+
+        for (const item of textContent.items as any[]) {
+            if (!('str' in item)) continue;
+
+            // item.transform[5] is the Y-coordinate
+            const currentY = item.transform[5];
+
+            // If the Y coordinate changes significantly, treat as a new line
+            if (lastY !== -1 && Math.abs(lastY - currentY) > 2) {
+                pageText += '\n';
+            } else if (pageText.length > 0 && !pageText.endsWith('\n') && !pageText.endsWith(' ')) {
+                pageText += ' ';
+            }
+
+            pageText += item.str.trim() + ' ';
+            lastY = currentY;
+        }
+
         fullText += pageText + '\n';
     }
 
