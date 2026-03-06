@@ -221,6 +221,38 @@ function parsePDFText(text: string): Transaction[] {
             continue;
         }
 
+        // Pattern for Sicredi PDF statement
+        // Example: "02/02/2026 PAGAMENTO PIX 08173733309 PEDRO ONOFRE MARQUES PIX_DEB -100,00 35.766,44"
+        // Meaning: Date | Description | Document (optional, e.g. PIX_DEB) | Value | Balance
+        const patternSicredi = /^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-]?\d{1,3}(?:\.\d{3})*,\d{2})\s+(\d{1,3}(?:\.\d{3})*,\d{2})$/;
+        match = line.match(patternSicredi);
+        if (match) {
+            const [, dateStr, descRaw, valStr] = match;
+            const [day, month, year] = dateStr.split('/').map(Number);
+            const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+
+            // Clean value
+            const cleanVal = valStr.replace(/\./g, '').replace(',', '.');
+            const isNegative = cleanVal.startsWith('-');
+            const value = parseFloat(cleanVal.replace(/[^0-9.]/g, ''));
+
+            // The description might end with the Document code (e.g. "PIX_DEB"), so we try to clean it
+            // Typically document codes don't have spaces, but descriptions might. Let's just keep the whole thing or trim the last word if it looks like a code
+            const descParts = descRaw.trim().split(/\s+/);
+            // If the last part has '_' or is all caps and short, it might be the document code, but let's just keep everything as description to be safe
+            const description = descRaw.trim();
+
+            if (!isNaN(date.getTime()) && !isNaN(value) && value > 0) {
+                transactions.push({
+                    date,
+                    description,
+                    value,
+                    type: isNegative ? 'expense' : 'income'
+                });
+            }
+            continue;
+        }
+
         match = line.match(patternShort);
         if (match) {
             const [, dateStr, desc, valStr] = match;
