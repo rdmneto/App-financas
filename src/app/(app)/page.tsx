@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import {
     PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip,
-    BarChart, Bar, XAxis, YAxis, CartesianGrid
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, AreaChart, Area
 } from "recharts";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/utils/supabase/client";
@@ -33,10 +33,14 @@ export default function DashboardPage() {
     const supabase = createClient();
 
     // Data State Variables
+    const [globalCurrentBalance, setGlobalCurrentBalance] = useState(0);
+    const [periodBalance, setPeriodBalance] = useState(0);
     const [totalIncomes, setTotalIncomes] = useState(0);
     const [totalExpenses, setTotalExpenses] = useState(0);
     const [totalInvestments, setTotalInvestments] = useState(0);
-    const [previousBalance, setPreviousBalance] = useState(0);
+
+    // Top Expenses State
+    const [topExpenses, setTopExpenses] = useState<{ description: string, value: number }[]>([]);
 
     // Expenses Pie Chart States
     const [essentialsSum, setEssentialsSum] = useState(0);
@@ -80,12 +84,16 @@ export default function DashboardPage() {
             const startDateStr = `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}`;
             const endDateStr = `${endDate.getFullYear()}-${pad(endDate.getMonth() + 1)}-${pad(endDate.getDate())}`;
 
-            const [incomesRes, expensesRes, investmentsRes, pastIncomesRes, pastExpensesRes] = await Promise.all([
+            // We need to fetch ALL past/present incomes and expenses up to TODAY to calculate the Global Current Balance accurately,
+            // taking into account all recurrences up to today.
+            const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+            const [incomesRes, expensesRes, investmentsRes, globalIncomesRes, globalExpensesRes] = await Promise.all([
                 supabase.from('incomes').select('*').gte('date', startDateStr).lte('date', endDateStr),
                 supabase.from('expenses').select('*').gte('date', startDateStr).lte('date', endDateStr),
                 supabase.from('investments').select('*').gte('date', startDateStr).lte('date', endDateStr),
-                supabase.from('incomes').select('*').lt('date', startDateStr),
-                supabase.from('expenses').select('*').lt('date', startDateStr)
+                supabase.from('incomes').select('*').lte('date', todayStr),
+                supabase.from('expenses').select('*').lte('date', todayStr)
             ]);
 
             let iSum = 0;
@@ -156,65 +164,48 @@ export default function DashboardPage() {
             };
 
             const processedExpensesData = expensesRes.data ? processExpenses(expensesRes.data, false) : [];
-            const processedPastExpensesData = pastExpensesRes.data ? processExpenses(pastExpensesRes.data, true) : [];
-
-            // Some past expenses might generate virtuals that fall into the CURRENT time window!
-            // We need to move those from processedPastExpensesData to processedExpensesData
-            const finalPastExpenses: any[] = [];
-            processedPastExpensesData.forEach(e => {
-                const [year, month, day] = e.date.split('-');
-                const eDate = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
-                // adjust pseudo local comparison logic since startDate/endDate are native local Date objects
-                if (eDate >= startDate && eDate <= endDate) {
-                    processedExpensesData.push(e);
-                } else if (eDate < startDate) {
-                    finalPastExpenses.push(e);
-                }
-            });
+            const processedGlobalExpensesData = globalExpensesRes.data ? processExpenses(globalExpensesRes.data, true) : [];
 
 
             // For the current period (offset=0), filter out expenses with dates after today
             // so that virtual recurring charges for future months don't inflate the totals.
             const today = new Date();
             today.setHours(23, 59, 59, 999);
-            const expensesForTotals = (offset >= 0)
-                ? processedExpensesData.filter(e => {
-                    const [year, month, day] = e.date.split('-');
-                    const eDate = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
-                    if (offset > 0) return false; // Future period — no totals
-                    return eDate <= today;
-                })
-                : processedExpensesData;
+            const expensesForTotals = processedExpensesData.filter(e => {
+                const [year, month, day] = e.date.split('-');
+                const eDate = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
+                return eDate >= startDate && eDate <= endDate; // Only exact period matches
+            });
+
+            // For Top Expenses
+            const sortedExpenses = [...expensesForTotals].sort((a, b) => b.value - a.value).slice(0, 5);
+            setTopExpenses(sortedExpenses.map(e => ({ description: e.description, value: e.value })));
 
             expensesForTotals.forEach(e => {
                 eSum += e.value;
                 if (e.category_type === 'Essenciais') essSum += e.value;
                 else if (e.category_type === 'Estilo de Vida') lifeSum += e.value;
                 else if (e.category_type === 'Poupança') savSum += e.value;
-                // Note: If using the old name 'Poupança/Dívidas' it falls into the last bucket
                 else if (e.category_type.includes('Poupança')) savSum += e.value;
             });
 
             let invSum = 0;
             if (investmentsRes.data) invSum = investmentsRes.data.reduce((acc, curr) => acc + curr.value, 0);
 
-            // Fetch past investments to include in the total applications summary
-            const { data: pastInvestmentsData } = await supabase.from('investments').select('value').lt('date', startDateStr);
-            if (pastInvestmentsData) {
-                invSum += pastInvestmentsData.reduce((acc, curr) => acc + curr.value, 0);
-            }
+            let globalIncomesSum = 0;
+            if (globalIncomesRes.data) globalIncomesSum = globalIncomesRes.data.reduce((acc, curr) => acc + curr.value, 0);
 
-            let pastIncomesSum = 0;
-            if (pastIncomesRes.data) pastIncomesSum = pastIncomesRes.data.reduce((acc, curr) => acc + curr.value, 0);
-
-            let pastExpensesSum = 0;
-            finalPastExpenses.forEach(e => {
-                pastExpensesSum += e.value;
+            let globalExpensesSum = 0;
+            processedGlobalExpensesData.forEach(e => {
+                const [year, month, day] = e.date.split('-');
+                const eDate = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
+                if (eDate <= today) {
+                    globalExpensesSum += e.value;
+                }
             });
 
-            const initialBalance = pastIncomesSum - pastExpensesSum;
-            setPreviousBalance(initialBalance);
-
+            setGlobalCurrentBalance(globalIncomesSum - globalExpensesSum);
+            setPeriodBalance(iSum - eSum);
             setTotalIncomes(iSum);
             setTotalExpenses(eSum);
             setTotalInvestments(invSum);
@@ -222,6 +213,25 @@ export default function DashboardPage() {
             setEssentialsSum(essSum);
             setLifestyleSum(lifeSum);
             setSavingsSum(savSum);
+
+            // Calculate past balance to offset the chart (balance before startDate)
+            let chartPreviousIncomes = 0;
+            let chartPreviousExpenses = 0;
+            if (globalIncomesRes.data) {
+                globalIncomesRes.data.forEach(inc => {
+                    const [year, month, day] = inc.date.split('-');
+                    const eqDate = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
+                    if (eqDate < startDate) chartPreviousIncomes += inc.value;
+                });
+            }
+            if (processedGlobalExpensesData) {
+                processedGlobalExpensesData.forEach(exp => {
+                    const [year, month, day] = exp.date.split('-');
+                    const eqDate = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
+                    if (eqDate < startDate) chartPreviousExpenses += exp.value;
+                });
+            }
+            const initialChartBalance = chartPreviousIncomes - chartPreviousExpenses;
 
             // Build Data History Bins for the Dashboard Chart
             let bins: { name: string; balance: number; incomes: number; expenses: number; investments: number }[] = [];
@@ -272,7 +282,7 @@ export default function DashboardPage() {
             });
 
             // Make it cumulative to behave like true Evolution scale graph
-            let runningBalance = initialBalance;
+            let runningBalance = initialChartBalance;
 
             const currentDayIndex = now.getDay();
             const currentDateIndex = now.getDate() - 1;
@@ -304,15 +314,13 @@ export default function DashboardPage() {
         fetchDashboardData();
     }, [filter, offset]); // re-fetch / re-aggregate when filter or offset changes
 
-    // Compute dynamic dashboard structure
-    const currentBalance = previousBalance + totalIncomes - totalExpenses;
     const formatBRL = (val: number) => `R$ ${val.toFixed(2).replace('.', ',')}`;
 
     const summaryData = [
-        { label: "Saldo Atual", value: formatBRL(currentBalance), icon: Wallet, color: "text-primary", bg: "bg-primary/10" },
+        { label: "Saldo Atual", value: formatBRL(globalCurrentBalance), icon: Wallet, color: "text-primary", bg: "bg-primary/10" },
+        { label: "Saldo do Período", value: formatBRL(periodBalance), icon: Wallet, color: periodBalance >= 0 ? "text-success" : "text-destructive", bg: periodBalance >= 0 ? "bg-success/10" : "bg-destructive/10" },
         { label: "Receitas", value: formatBRL(totalIncomes), icon: ArrowDownCircle, color: "text-success", bg: "bg-success/10" },
         { label: "Despesas", value: formatBRL(totalExpenses), icon: ArrowUpCircle, color: "text-destructive", bg: "bg-destructive/10" },
-        { label: "Aplicações", value: formatBRL(totalInvestments), icon: TrendingUp, color: "text-blue-500", bg: "bg-blue-500/10" },
     ];
 
     const pieData = [
@@ -390,42 +398,109 @@ export default function DashboardPage() {
 
             {/* Charts Area */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Expenses Pie Chart */}
-                <div className={cn("lg:col-span-1 bg-card border border-border rounded-xl p-6 shadow-sm", isLoading && "opacity-50 pointer-events-none")}>
-                    <h2 className="text-lg font-bold mb-4">Despesas por Categoria</h2>
-                    <div className="h-64 w-full">
+
+                {/* Balance History Line Chart */}
+                <div className={cn("lg:col-span-2 bg-card border border-border rounded-xl p-6 shadow-sm", isLoading && "opacity-50 pointer-events-none")}>
+                    <h2 className="text-lg font-bold mb-4">Fluxo de Caixa (Receitas vs Despesas)</h2>
+                    <div className="h-[300px] w-full">
                         <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={pieData}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={60}
-                                    outerRadius={80}
-                                    paddingAngle={5}
-                                    dataKey="value"
-                                >
-                                    {pieData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={entry.color} />
-                                    ))}
-                                </Pie>
-                                <RechartsTooltip />
-                            </PieChart>
+                            <AreaChart data={historyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                <defs>
+                                    <linearGradient id="colorIncomes" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="var(--success)" stopOpacity={0.3} />
+                                        <stop offset="95%" stopColor="var(--success)" stopOpacity={0} />
+                                    </linearGradient>
+                                    <linearGradient id="colorExpenses" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="var(--destructive)" stopOpacity={0.3} />
+                                        <stop offset="95%" stopColor="var(--destructive)" stopOpacity={0} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted-foreground)' }} dy={10} />
+                                <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--muted-foreground)' }} tickFormatter={yAxisFormatter} width={80} />
+                                <RechartsTooltip
+                                    cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '3 3' }}
+                                    contentStyle={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)', borderRadius: '8px' }}
+                                    formatter={(value: any, name: string | undefined) => {
+                                        const formattedValue = `R$ ${Number(value || 0).toFixed(2).replace('.', ',')}`;
+                                        const labels: Record<string, string> = { incomes: "Receitas", expenses: "Despesas" };
+                                        return [formattedValue, labels[name || ""] || name];
+                                    }}
+                                />
+                                <Area type="monotone" dataKey="incomes" name="incomes" stroke="var(--success)" strokeWidth={3} fillOpacity={1} fill="url(#colorIncomes)" />
+                                <Area type="monotone" dataKey="expenses" name="expenses" stroke="var(--destructive)" strokeWidth={3} fillOpacity={1} fill="url(#colorExpenses)" />
+                            </AreaChart>
                         </ResponsiveContainer>
                     </div>
-                    <div className="space-y-3 mt-4">
-                        {pieData.map((entry, i) => (
-                            <div key={i} className="flex justify-between items-center text-sm">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
-                                    <span className="text-foreground">{entry.name}</span>
-                                </div>
-                                <span className="font-medium text-muted-foreground">
-                                    R$ {entry.value.toFixed(2).replace('.', ',')}
-                                </span>
+                </div>
+
+                {/* Expenses Pie Chart */}
+                <div className={cn("lg:col-span-1 bg-card border border-border rounded-xl p-6 shadow-sm flex flex-col items-center", isLoading && "opacity-50 pointer-events-none")}>
+                    <h2 className="text-lg font-bold mb-4 self-start">Despesas por Categoria</h2>
+                    {essentialsSum > 0 || lifestyleSum > 0 || savingsSum > 0 ? (
+                        <>
+                            <div className="h-64 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={pieData}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={60}
+                                            outerRadius={80}
+                                            paddingAngle={5}
+                                            dataKey="value"
+                                        >
+                                            {pieData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.color} />
+                                            ))}
+                                        </Pie>
+                                        <RechartsTooltip formatter={(val: any) => `R$ ${Number(val || 0).toFixed(2).replace('.', ',')}`} />
+                                    </PieChart>
+                                </ResponsiveContainer>
                             </div>
-                        ))}
-                    </div>
+                            <div className="space-y-3 mt-4 w-full">
+                                {pieData.map((entry, i) => (
+                                    <div key={i} className="flex justify-between items-center text-sm">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
+                                            <span className="text-foreground">{entry.name}</span>
+                                        </div>
+                                        <span className="font-medium text-muted-foreground">
+                                            R$ {entry.value.toFixed(2).replace('.', ',')}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    ) : (
+                        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+                            Nenhuma despesa no período.
+                        </div>
+                    )}
+                </div>
+
+                {/* Top Expenses List */}
+                <div className={cn("lg:col-span-1 bg-card border border-border rounded-xl p-6 shadow-sm", isLoading && "opacity-50 pointer-events-none")}>
+                    <h2 className="text-lg font-bold mb-4">Maiores Despesas do Período</h2>
+                    {topExpenses.length > 0 ? (
+                        <div className="space-y-4">
+                            {topExpenses.map((expense, i) => (
+                                <div key={i} className="flex justify-between items-center border-b border-border pb-3 last:border-0 last:pb-0">
+                                    <span className="text-sm font-medium text-foreground truncate max-w-[180px]" title={expense.description}>
+                                        {expense.description}
+                                    </span>
+                                    <span className="text-sm text-destructive font-semibold">
+                                        -{formatBRL(expense.value)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm h-32">
+                            Nenhuma despesa no período.
+                        </div>
+                    )}
                 </div>
 
                 {/* Balance History Bar Chart */}
@@ -452,10 +527,8 @@ export default function DashboardPage() {
                                         return [formattedValue, labels[safeName] || safeName];
                                     }}
                                 />
-                                <Bar dataKey="incomes" name="incomes" fill="var(--success)" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                                <Bar dataKey="expenses" name="expenses" fill="var(--destructive)" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                                <Bar dataKey="investments" name="investments" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={40} />
                                 <Bar dataKey="balance" name="balance" fill="#eab308" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                                <Bar dataKey="investments" name="investments" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={40} />
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
