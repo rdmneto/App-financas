@@ -215,8 +215,8 @@ function parsePDFText(text: string): Transaction[] {
     const currentYear = new Date().getFullYear();
 
     for (const line of lines) {
-        // Skip header or separator lines
-        if (/saldo|extrato|agencia|conta|cliente|cpf|cnpj|periodo|data\s+hist|lancamento|saldo anterior/i.test(line)) continue;
+        // Skip header or separator lines (only if they are clearly not transactions)
+        if (/^(?:saldo anterior|saldo final|saldo atual|extrato|resumo|cliente|cpf\s?:|cnpj\s?:|período|data\s+hist)/i.test(line)) continue;
 
         // Pattern for Sicredi PDF statement
         // Example: "02/02/2026 PAGAMENTO PIX 08173733309 PEDRO ONOFRE MARQUES PIX_DEB -100,00 35.766,44"
