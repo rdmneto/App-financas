@@ -223,8 +223,10 @@ function parsePDFText(text: string): Transaction[] {
 
         // Pattern for Sicredi PDF statement
         // Example: "02/02/2026 PAGAMENTO PIX 08173733309 PEDRO ONOFRE MARQUES PIX_DEB -100,00 35.766,44"
-        // Meaning: Date | Description | Document (optional, e.g. PIX_DEB) | Value | Balance
-        const patternSicredi = /^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-]?\d{1,3}(?:\.\d{3})*,\d{2})\s+(\d{1,3}(?:\.\d{3})*,\d{2})$/;
+        // Meaning: Date | Description | Document (optional, e.g. PIX_DEB) | Value | Balance (optional)
+        // We prevent matching lines containing "Custo Efetivo Total", "CET", "Saldo" by using a negative lookahead
+        const patternSicredi = /^(?!.*(?:Custo Efetivo|CET|Saldo))(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-]?\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{1,3}(?:\.\d{3})*,\d{2}))?$/i;
+
         match = line.match(patternSicredi);
         if (match) {
             const [, dateStr, descRaw, valStr] = match;
