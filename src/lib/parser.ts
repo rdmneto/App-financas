@@ -218,34 +218,13 @@ function parsePDFText(text: string): Transaction[] {
         // Skip header or separator lines
         if (/saldo|extrato|agencia|conta|cliente|cpf|cnpj|periodo|data\s+hist|lancamento|saldo anterior/i.test(line)) continue;
 
-        let match = line.match(patternFull);
-        if (match) {
-            const [, dateStr, desc, valStr] = match;
-            const [day, month, year] = dateStr.split('/').map(Number);
-            const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-
-            const cleanVal = valStr.replace(/\s/g, '').replace(',', '.');
-            const isNegative = cleanVal.startsWith('-');
-            const value = parseFloat(cleanVal.replace(/[^0-9.]/g, ''));
-
-            if (!isNaN(date.getTime()) && !isNaN(value) && value > 0) {
-                transactions.push({
-                    date,
-                    description: desc.trim(),
-                    value,
-                    type: isNegative ? 'expense' : 'income'
-                });
-            }
-            continue;
-        }
-
         // Pattern for Sicredi PDF statement
         // Example: "02/02/2026 PAGAMENTO PIX 08173733309 PEDRO ONOFRE MARQUES PIX_DEB -100,00 35.766,44"
         // Meaning: Date | Description | Document (optional, e.g. PIX_DEB) | Value | Balance (optional)
         // We prevent matching lines containing "Custo Efetivo Total", "CET", "Saldo" by using a negative lookahead
         const patternSicredi = /^(?!.*(?:Custo Efetivo|CET|Saldo))(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-]?\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{1,3}(?:\.\d{3})*,\d{2}))?$/i;
 
-        match = line.match(patternSicredi);
+        let match = line.match(patternSicredi);
         if (match) {
             const [, dateStr, descRaw, valStr] = match;
             const [day, month, year] = dateStr.split('/').map(Number);
@@ -266,6 +245,27 @@ function parsePDFText(text: string): Transaction[] {
                 transactions.push({
                     date,
                     description,
+                    value,
+                    type: isNegative ? 'expense' : 'income'
+                });
+            }
+            continue;
+        }
+
+        match = line.match(patternFull);
+        if (match) {
+            const [, dateStr, desc, valStr] = match;
+            const [day, month, year] = dateStr.split('/').map(Number);
+            const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+
+            const cleanVal = valStr.replace(/\s/g, '').replace(',', '.');
+            const isNegative = cleanVal.startsWith('-');
+            const value = parseFloat(cleanVal.replace(/[^0-9.]/g, ''));
+
+            if (!isNaN(date.getTime()) && !isNaN(value) && value > 0) {
+                transactions.push({
+                    date,
+                    description: desc.trim(),
                     value,
                     type: isNegative ? 'expense' : 'income'
                 });
