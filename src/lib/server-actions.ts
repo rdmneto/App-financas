@@ -3,6 +3,8 @@
 // No top-level pdfjs import to avoid render errors
 // Polyfill DOMMatrix for Node.js environment
 import DOMMatrix from "@thednp/dommatrix";
+import path from "path";
+import { pathToFileURL } from "url";
 
 if (typeof global !== 'undefined' && typeof global.DOMMatrix === 'undefined') {
     // @ts-ignore
@@ -174,9 +176,9 @@ export async function parsePDFBufferServer(base64Data: string): Promise<string> 
         // Dynamic import inside the action to avoid crashes during page render
         const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
-        // Use CDN worker for server-side stability in different environments (Vercel/Netlify/Local)
-        // This avoids "module not found" errors for the worker file in serverless contexts.
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/legacy/build/pdf.worker.min.mjs`;
+        // Use file:// protocol for local worker resolution in Node.js ESM
+        const workerPath = path.resolve(process.cwd(), "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).toString();
 
         const buffer = Buffer.from(base64Data, "base64");
         const uint8Array = new Uint8Array(buffer);
