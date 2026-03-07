@@ -154,7 +154,9 @@ export async function parsePDF(file: File): Promise<Transaction[]> {
     pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    // Convert to Uint8Array to prevent issues in mobile webviews where ArrayBuffer behavior differs
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const pdf = await pdfjsLib.getDocument({ data: uint8Array }).promise;
 
     let fullText = '';
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -164,7 +166,11 @@ export async function parsePDF(file: File): Promise<Transaction[]> {
         let pageText = '';
         let lastY = -1;
 
-        for (const item of textContent.items as any[]) {
+        const items = textContent.items || [];
+        // Use a traditional for loop instead of for...of to prevent `undefined is not a function (near '...t of e...')`
+        // which happens on older JS engines lacking full Iterator support for these custom objects
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i] as any;
             if (!('str' in item)) continue;
 
             // item.transform[5] is the Y-coordinate
@@ -198,13 +204,16 @@ function parsePDFText(text: string): Transaction[] {
     const lines = text.split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(l => l.length > 5);
 
     // Pattern 1: DD/MM/YYYY ... value (e.g. Bradesco, Itaú, Santander PDF layout)
-    // Example line: "15/02/2025  PIX RECEBIDO - JOAO SILVA   + 500,00"
-    // Example line: "15/02/2025  COMPRA AMERICANAS  -250,00"
-    const patternFull = /(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-+]?\s*[\d.,]+)\s*$/;
+    // Make patternFull stricter so it demands a decimal comma
+    const patternFull = /(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-+]?\s*\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
 
     // Pattern 2: DD/MM ... value (short date, e.g. Nubank, Inter credit card PDF)
-    // Example line: "12 MAR   UBER TRIP   R$ 32,50"
     const patternShort = /(\d{2}\s+[A-Za-z]{3})\s+(.+?)\s+R?\$?\s*([\d.,]+)\s*$/i;
+
+    // Banco do Brasil (BB) Patterns
+    const patternBBFull = /^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([\d.,]+)\s*\(([-+])\)$/;
+    const patternBBValueLine = /^(.*?)\s*([\d{1,3}(?:\.\d{3})*,\d{2}]+)\s*\(([-+])\)$/;
+    const patternBBPending = /^(\d{2}\/\d{2}\/\d{4})\s+(.+)$/;
 
     const monthMap: Record<string, number> = {
         jan: 0, fev: 1, feb: 1, mar: 2, abr: 3, apr: 3, mai: 4, may: 4,
@@ -214,14 +223,14 @@ function parsePDFText(text: string): Transaction[] {
 
     const currentYear = new Date().getFullYear();
 
+    let pendingBBDate: Date | null = null;
+    let pendingBBDesc = '';
+
     for (const line of lines) {
         // Skip header or separator lines (only if they are clearly not transactions)
-        if (/^(?:saldo anterior|saldo final|saldo atual|extrato|resumo|cliente|cpf\s?:|cnpj\s?:|período|data\s+hist)/i.test(line)) continue;
+        if (/^(?:saldo anterior|saldo final|saldo atual|extrato|resumo|cliente|cpf\s?:|cnpj\s?:|período|data\s+hist|saldo do dia)/i.test(line)) continue;
 
         // Pattern for Sicredi PDF statement
-        // Example: "02/02/2026 PAGAMENTO PIX 08173733309 PEDRO ONOFRE MARQUES PIX_DEB -100,00 35.766,44"
-        // Meaning: Date | Description | Document (optional, e.g. PIX_DEB) | Value | Balance (optional)
-        // We prevent matching lines containing "Custo Efetivo Total", "CET", "Saldo" by using a negative lookahead
         const patternSicredi = /^(?!.*(?:Custo Efetivo|CET|Saldo))(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-]?\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{1,3}(?:\.\d{3})*,\d{2}))?$/i;
 
         let match = line.match(patternSicredi);
@@ -235,10 +244,6 @@ function parsePDFText(text: string): Transaction[] {
             const isNegative = cleanVal.startsWith('-');
             const value = parseFloat(cleanVal.replace(/[^0-9.]/g, ''));
 
-            // The description might end with the Document code (e.g. "PIX_DEB"), so we try to clean it
-            // Typically document codes don't have spaces, but descriptions might. Let's just keep the whole thing or trim the last word if it looks like a code
-            const descParts = descRaw.trim().split(/\s+/);
-            // If the last part has '_' or is all caps and short, it might be the document code, but let's just keep everything as description to be safe
             const description = descRaw.trim();
 
             if (!isNaN(date.getTime()) && !isNaN(value) && value > 0) {
@@ -250,6 +255,55 @@ function parsePDFText(text: string): Transaction[] {
                 });
             }
             continue;
+        }
+
+        // BB Match 1: Full line with date and value
+        match = line.match(patternBBFull);
+        if (match) {
+            const [, dateStr, desc, valStr, sign] = match;
+            const [day, month, year] = dateStr.split('/').map(Number);
+            const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+            const value = parseFloat(valStr.replace(/\./g, '').replace(',', '.'));
+
+            if (!isNaN(date.getTime()) && !isNaN(value) && value > 0) {
+                transactions.push({ date, description: desc.trim(), value, type: sign === '-' ? 'expense' : 'income' });
+            }
+            pendingBBDate = null;
+            pendingBBDesc = '';
+            continue;
+        }
+
+        // BB Match 2: Date and description but NO value yet
+        match = line.match(patternBBPending);
+        if (match && !line.match(/\(([-+])\)$/) && !line.match(patternFull)) {
+            const [, dateStr, desc] = match;
+            const [day, month, year] = dateStr.split('/').map(Number);
+            pendingBBDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+            pendingBBDesc = desc.trim();
+            continue; // wait for next line
+        }
+
+        // BB Match 3: Pending transaction gets its value line
+        if (pendingBBDate) {
+            match = line.match(patternBBValueLine);
+            if (match) {
+                const [, extraDesc, valStr, sign] = match;
+                const value = parseFloat(valStr.replace(/\./g, '').replace(',', '.'));
+                if (!isNaN(value) && value > 0) {
+                    transactions.push({
+                        date: pendingBBDate,
+                        description: (pendingBBDesc + ' ' + extraDesc).trim(),
+                        value,
+                        type: sign === '-' ? 'expense' : 'income'
+                    });
+                }
+                pendingBBDate = null;
+                pendingBBDesc = '';
+                continue;
+            } else {
+                pendingBBDesc += ' ' + line.trim();
+                continue;
+            }
         }
 
         match = line.match(patternFull);
