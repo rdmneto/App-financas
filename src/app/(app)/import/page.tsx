@@ -18,7 +18,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/utils/supabase/client";
-import { parseOFX, parseCSV, parsePDF, suggestCategory, Transaction } from "@/lib/parser";
+import { parseOFX, parseCSV, suggestCategory, Transaction } from "@/lib/parser";
+import { parsePDFBufferServer } from "@/lib/server-actions";
 
 const INCOME_CATEGORIES = ["Salário", "Renda Extra", "Aposentadoria / Investimentos", "Outros"];
 
@@ -76,14 +77,39 @@ export default function ImportPage() {
             let parsed: Transaction[] = [];
             const lower = file.name.toLowerCase();
 
-            if (lower.endsWith('.ofx')) {
+            if (lower.indexOf('.ofx') !== -1) {
                 const content = await file.text();
                 parsed = parseOFX(content);
-            } else if (lower.endsWith('.csv')) {
+            } else if (lower.indexOf('.csv') !== -1) {
                 const content = await file.text();
                 parsed = parseCSV(content);
-            } else if (lower.endsWith('.pdf')) {
-                parsed = await parsePDF(file);
+            } else if (lower.indexOf('.pdf') !== -1) {
+                const arrayBuffer = await file.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                let binary = '';
+                const len = uint8Array.byteLength;
+                for (let i = 0; i < len; i++) {
+                    binary += String.fromCharCode(uint8Array[i]);
+                }
+                const base64 = btoa(binary);
+
+                const responseJson = await parsePDFBufferServer(base64);
+                const result = JSON.parse(responseJson);
+
+                if (result.success) {
+                    const serverTransactions = result.transactions;
+                    for (let i = 0; i < serverTransactions.length; i++) {
+                        const st = serverTransactions[i];
+                        parsed.push({
+                            date: new Date(st.date),
+                            description: st.description,
+                            value: st.value,
+                            type: st.type
+                        });
+                    }
+                } else {
+                    throw new Error(result.error || "Erro no servidor ao processar PDF.");
+                }
             } else {
                 throw new Error("Formato de arquivo não suportado. Use .pdf, .ofx ou .csv");
             }

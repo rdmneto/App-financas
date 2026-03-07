@@ -1,7 +1,7 @@
 "use server";
 
-// Use require to bypass missing type definition for legacy build path
-const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+// @ts-ignore - bypass path issue in build
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
 interface Transaction {
     date: Date;
@@ -12,11 +12,22 @@ interface Transaction {
 
 function parsePDFText(text: string): Transaction[] {
     const transactions: Transaction[] = [];
-    const lines = text.split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(l => l.length > 5);
 
+    // Normalize: collapse multiple spaces and filter very short lines
+    const rawLines = text.split('\n');
+    const lines: string[] = [];
+    for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i].replace(/\s+/g, ' ').trim();
+        if (line.length > 5) {
+            lines.push(line);
+        }
+    }
+
+    // Pattern definitions (synced with parser.ts)
     const patternBBPending = /^(\d{2}\/\d{2}\/\d{4})\s+([\d{1,3}(?:\.\d{3})*,\d{2}]+)\s*\(([-+])\)/;
     const patternFull = /(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-+]?\s*\d{1,3}(?:\.\d{3})*,\d{2})\s*$/;
     const patternShort = /(\d{2}\s+[A-Za-z]{3})\s+(.+?)\s+R?\$?\s*([\d.,]+)\s*$/i;
+    const patternSicredi = /(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-]?\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{1,3}(?:\.\d{3})*,\d{2}))?$/i;
 
     const monthMap: Record<string, number> = {
         jan: 0, fev: 1, feb: 1, mar: 2, abr: 3, apr: 3, mai: 4, may: 4,
@@ -27,9 +38,12 @@ function parsePDFText(text: string): Transaction[] {
 
     let pendingBBTransaction: Transaction | null = null;
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Skip common headers
         if (/^(?:saldo anterior|saldo final|saldo atual|extrato|resumo|cliente|cpf\s?:|cnpj\s?:|período|data\s+hist|saldo do dia)/i.test(line)) continue;
-        if (line.includes("Saldo do dia") || line.includes("Saldo Anterior") || line.includes("S A L D O") || line.includes("Total Devido") || line.includes("Informações")) {
+        if (line.indexOf("Saldo do dia") !== -1 || line.indexOf("Saldo Anterior") !== -1 || line.indexOf("S A L D O") !== -1 || line.indexOf("Total Devido") !== -1 || line.indexOf("Informações") !== -1) {
             if (pendingBBTransaction) {
                 transactions.push(pendingBBTransaction);
                 pendingBBTransaction = null;
@@ -37,23 +51,43 @@ function parsePDFText(text: string): Transaction[] {
             continue;
         }
 
-        const patternSicredi = /^(?!.*(?:Custo Efetivo|CET|Saldo))(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-]?\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{1,3}(?:\.\d{3})*,\d{2}))?$/i;
-        if (line.match(patternSicredi)) { }
+        // Sicredi Check
+        const sicrediMatch = line.match(patternSicredi);
+        if (sicrediMatch) {
+            if (line.indexOf("Custo Efetivo") === -1 && line.indexOf("CET") === -1 && line.indexOf("Saldo") === -1) {
+                const dateParts = sicrediMatch[1].split('/');
+                const date = new Date(Date.UTC(Number(dateParts[2]), Number(dateParts[1]) - 1, Number(dateParts[0]), 12, 0, 0));
 
+                const cleanVal = sicrediMatch[3].replace(/\./g, '').replace(',', '.');
+                const isNegative = cleanVal.indexOf('-') === 0;
+                const value = Math.abs(parseFloat(cleanVal));
+
+                if (!isNaN(date.getTime()) && !isNaN(value)) {
+                    transactions.push({
+                        date: date,
+                        description: sicrediMatch[2].trim(),
+                        value: value,
+                        type: isNegative ? 'expense' : 'income'
+                    });
+                }
+                continue;
+            }
+        }
+
+        // BB Pending check
         let match = line.match(patternBBPending);
         if (match) {
             if (pendingBBTransaction) transactions.push(pendingBBTransaction);
-            const [, dateStr, valStr, sign] = match;
-            const [day, month, year] = dateStr.split('/').map(Number);
-            const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-            const value = parseFloat(valStr.replace(/\./g, '').replace(',', '.'));
+            const dateParts = match[1].split('/');
+            const date = new Date(Date.UTC(Number(dateParts[2]), Number(dateParts[1]) - 1, Number(dateParts[0]), 12, 0, 0));
+            const value = parseFloat(match[2].replace(/\./g, '').replace(',', '.'));
 
             if (!isNaN(date.getTime()) && !isNaN(value) && value > 0) {
                 pendingBBTransaction = {
-                    date,
+                    date: date,
                     description: '',
-                    value,
-                    type: sign === '-' ? 'expense' : 'income'
+                    value: value,
+                    type: match[3] === '-' ? 'expense' : 'income'
                 };
             }
             continue;
@@ -64,60 +98,67 @@ function parsePDFText(text: string): Transaction[] {
                 transactions.push(pendingBBTransaction);
                 pendingBBTransaction = null;
             } else {
-                if (!line.match(/^\d+$/) && !line.includes("BB Rende Fácil") && !line.includes("Rende Facil") && !line.includes("Pix - Recebido") && !line.includes("Pix - Enviado") && !line.includes("Transferência enviada") && !line.includes("Transferência recebida")) {
+                if (!line.match(/^\d+$/) && !line.includes("BB Rende Fácil") && !line.includes("Rende Facil") && !line.includes("Pix - Recebido") && !line.includes("Pix - Enviado")) {
                     pendingBBTransaction.description += (pendingBBTransaction.description ? ' ' : '') + line.trim();
                 }
                 continue;
             }
         }
 
+        // Normal Full Pattern
         match = line.match(patternFull);
         if (match) {
-            const [, dateStr, desc, valStr] = match;
-            const [day, month, year] = dateStr.split('/').map(Number);
-            const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-            const cleanVal = valStr.replace(/\s/g, '').replace(',', '.');
-            const isNegative = cleanVal.startsWith('-');
+            const dateParts = match[1].split('/');
+            const date = new Date(Date.UTC(Number(dateParts[2]), Number(dateParts[1]) - 1, Number(dateParts[0]), 12, 0, 0));
+
+            const cleanVal = match[3].replace(/\s/g, '').replace(',', '.');
+            const isNegative = cleanVal.indexOf('-') === 0;
             const value = parseFloat(cleanVal.replace(/[^0-9.]/g, ''));
 
             if (!isNaN(date.getTime()) && !isNaN(value) && value > 0) {
-                transactions.push({ date, description: desc.trim(), value, type: isNegative ? 'expense' : 'income' });
+                transactions.push({
+                    date: date,
+                    description: match[2].trim(),
+                    value: value,
+                    type: isNegative ? 'expense' : 'income'
+                });
             }
             continue;
         }
 
+        // Short Pattern (Date MonthShort)
         match = line.match(patternShort);
         if (match) {
-            const [, dateStr, desc, valStr] = match;
-            const parts = dateStr.trim().split(/\s+/);
-            const day = parseInt(parts[0]);
-            const monthKey = parts[1]?.toLowerCase().substring(0, 3);
+            const parts = match[1].trim().split(/\s+/);
+            const monthKey = parts[1] ? parts[1].toLowerCase().substring(0, 3) : '';
             const month = monthMap[monthKey];
 
-            if (month === undefined || isNaN(day)) continue;
+            if (month !== undefined) {
+                const date = new Date(Date.UTC(currentYear, month, parseInt(parts[0]), 12, 0, 0));
+                if (date > new Date()) date.setUTCFullYear(currentYear - 1);
 
-            const date = new Date(Date.UTC(currentYear, month, day, 12, 0, 0));
-            if (date > new Date()) date.setUTCFullYear(currentYear - 1);
-
-            const value = parseFloat(valStr.replace('.', '').replace(',', '.'));
-            if (isNaN(value) || value <= 0) continue;
-
-            transactions.push({
-                date,
-                description: desc.trim(),
-                value,
-                type: 'expense'
-            });
+                const value = parseFloat(match[3].replace('.', '').replace(',', '.'));
+                if (!isNaN(value) && value > 0) {
+                    transactions.push({
+                        date: date,
+                        description: match[2].trim(),
+                        value: value,
+                        type: 'expense'
+                    });
+                }
+            }
         }
     }
 
     if (pendingBBTransaction) transactions.push(pendingBBTransaction);
 
-    return transactions.map(t => {
+    for (let i = 0; i < transactions.length; i++) {
+        const t = transactions[i];
         if (!t.description || t.description.trim() === '') t.description = 'Transação';
         t.description = t.description.replace(/^\d{2}\/\d{2}\s\d{2}:\d{2}\s?/, '');
-        return t;
-    });
+    }
+
+    return transactions;
 }
 
 // Ensure pdfjs won't clash by setting dummy worker config since we are purely server-side legacy
@@ -162,7 +203,18 @@ export async function parsePDFBufferServer(base64Data: string): Promise<string> 
         }
 
         const transactions = parsePDFText(fullText);
-        return JSON.stringify({ success: true, transactions });
+        // Correctly handle Date objects to be plain strings for JSON serialization
+        const serialized = [];
+        for (let i = 0; i < transactions.length; i++) {
+            const t = transactions[i];
+            serialized.push({
+                date: t.date.toISOString(),
+                description: t.description,
+                value: t.value,
+                type: t.type
+            });
+        }
+        return JSON.stringify({ success: true, transactions: serialized });
     } catch (e: any) {
         console.error("PDF Parsing Server Error:", e);
         return JSON.stringify({ success: false, error: e.message || "Failed to parse PDF on Server" });
