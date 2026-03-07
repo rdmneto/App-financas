@@ -172,8 +172,11 @@ export async function parsePDFBufferServer(base64Data: string): Promise<string> 
     try {
         console.log("PDF Parsing Server: starting...");
         // Dynamic import inside the action to avoid crashes during page render
-        // @ts-ignore
         const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+
+        // Use CDN worker for server-side stability in different environments (Vercel/Netlify/Local)
+        // This avoids "module not found" errors for the worker file in serverless contexts.
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/legacy/build/pdf.worker.min.mjs`;
 
         const buffer = Buffer.from(base64Data, "base64");
         const uint8Array = new Uint8Array(buffer);
@@ -181,7 +184,7 @@ export async function parsePDFBufferServer(base64Data: string): Promise<string> 
         const doc = await pdfjsLib.getDocument({
             data: uint8Array,
             useSystemFonts: true,
-            disableFontFace: true, // Safer for server-side
+            disableFontFace: true,
         }).promise;
 
         let fullText = '';
