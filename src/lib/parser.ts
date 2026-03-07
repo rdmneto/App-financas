@@ -166,25 +166,25 @@ export async function parsePDF(file: File): Promise<Transaction[]> {
         let pageText = '';
         let lastY = -1;
 
-        const items = textContent.items || [];
-        // Extract array out to plain old JS Array, removing relying on object iterators
-        const itemsArray = Array.from(items);
-        for (let i = 0; i < itemsArray.length; i++) {
-            const item = itemsArray[i] as any;
-            if (!item || !('str' in item)) continue;
+        const items = textContent.items;
 
-            // item.transform[5] is the Y-coordinate
-            const currentY = item.transform && item.transform.length >= 6 ? item.transform[5] : lastY;
+        // Mobile WebView fix: Avoid for...of and Array.from(). Some pdfjs-dist versions return an Array-like object that lacks modern Iterator properties on ancient iOS/Android WebViews.
+        if (items) {
+            for (let i = 0; i < items.length; i++) {
+                const item = (items as any)[i];
+                if (!item || typeof item.str !== 'string') continue;
 
-            // If the Y coordinate changes significantly, treat as a new line
-            if (lastY !== -1 && Math.abs(lastY - currentY) > 2) {
-                pageText += '\n';
-            } else if (pageText.length > 0 && !pageText.endsWith('\n') && !pageText.endsWith(' ')) {
-                pageText += ' ';
+                const currentY = item.transform && item.transform.length >= 6 ? item.transform[5] : lastY;
+
+                if (lastY !== -1 && Math.abs(lastY - currentY) > 2) {
+                    pageText += '\n';
+                } else if (pageText.length > 0 && !pageText.endsWith('\n') && !pageText.endsWith(' ')) {
+                    pageText += ' ';
+                }
+
+                pageText += item.str.trim() + ' ';
+                lastY = currentY;
             }
-
-            pageText += item.str.trim() + ' ';
-            lastY = currentY;
         }
 
         fullText += pageText + '\n';

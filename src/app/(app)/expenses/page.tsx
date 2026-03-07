@@ -45,6 +45,11 @@ export default function ExpensesPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
+
+    const now = new Date();
+    const [selectedMonth, setSelectedMonth] = useState<string>(String(now.getMonth() + 1).padStart(2, '0'));
+    const [selectedYear, setSelectedYear] = useState<string>(String(now.getFullYear()));
+
     const supabase = createClient();
     const { register, handleSubmit, reset, watch } = useForm<ExpenseFormData>({
         defaultValues: { recurrence_type: 'none' }
@@ -299,11 +304,18 @@ export default function ExpensesPage() {
         setIsLoading(false);
     };
 
+    const filteredExpenses = useMemo(() => {
+        return expenses.filter(e => {
+            if (selectedMonth === "all") return e.date.startsWith(selectedYear);
+            return e.date.startsWith(`${selectedYear}-${selectedMonth}`);
+        });
+    }, [expenses, selectedMonth, selectedYear]);
+
     // Calculate totals dynamically from current state array instead of static variables
-    const totalExpenses = useMemo(() => expenses.reduce((acc, curr) => acc + curr.value, 0), [expenses]);
-    const totalEssentials = useMemo(() => expenses.filter(e => getBucket(e.category).name === "Essenciais").reduce((acc, curr) => acc + curr.value, 0), [expenses]);
-    const totalLifestyle = useMemo(() => expenses.filter(e => getBucket(e.category).name === "Estilo de Vida").reduce((acc, curr) => acc + curr.value, 0), [expenses]);
-    const totalSavings = useMemo(() => expenses.filter(e => getBucket(e.category).name === "Poupança" || e.category.includes("Poupança")).reduce((acc, curr) => acc + curr.value, 0), [expenses]);
+    const totalExpenses = useMemo(() => filteredExpenses.reduce((acc, curr) => acc + curr.value, 0), [filteredExpenses]);
+    const totalEssentials = useMemo(() => filteredExpenses.filter(e => getBucket(e.category).name === "Essenciais").reduce((acc, curr) => acc + curr.value, 0), [filteredExpenses]);
+    const totalLifestyle = useMemo(() => filteredExpenses.filter(e => getBucket(e.category).name === "Estilo de Vida").reduce((acc, curr) => acc + curr.value, 0), [filteredExpenses]);
+    const totalSavings = useMemo(() => filteredExpenses.filter(e => getBucket(e.category).name === "Poupança" || e.category.includes("Poupança")).reduce((acc, curr) => acc + curr.value, 0), [filteredExpenses]);
     const total = totalEssentials + totalLifestyle + totalSavings;
 
     return (
@@ -504,22 +516,56 @@ export default function ExpensesPage() {
                     </form>
                 </div>
 
-                {/* List of Expenses */}
                 <div className="lg:col-span-2 bg-card border border-border rounded-xl p-6 shadow-sm flex flex-col">
-                    <h2 className="text-xl font-bold mb-4">Histórico de Saídas</h2>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
+                        <h2 className="text-xl font-bold">Histórico de Saídas</h2>
+
+                        <div className="flex items-center gap-2">
+                            <select
+                                value={selectedMonth}
+                                onChange={(e) => setSelectedMonth(e.target.value)}
+                                className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                            >
+                                <option value="all">Ano Todo</option>
+                                <option value="01">Janeiro</option>
+                                <option value="02">Fevereiro</option>
+                                <option value="03">Março</option>
+                                <option value="04">Abril</option>
+                                <option value="05">Maio</option>
+                                <option value="06">Junho</option>
+                                <option value="07">Julho</option>
+                                <option value="08">Agosto</option>
+                                <option value="09">Setembro</option>
+                                <option value="10">Outubro</option>
+                                <option value="11">Novembro</option>
+                                <option value="12">Dezembro</option>
+                            </select>
+
+                            <select
+                                value={selectedYear}
+                                onChange={(e) => setSelectedYear(e.target.value)}
+                                className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                            >
+                                {Array.from({ length: 5 }).map((_, i) => {
+                                    const year = new Date().getFullYear() - 2 + i;
+                                    return <option key={year} value={year}>{year}</option>;
+                                })}
+                            </select>
+                        </div>
+                    </div>
 
                     <div className="flex-1 overflow-auto pr-2 space-y-3">
                         {isLoading ? (
                             <div className="flex items-center justify-center py-10">
                                 <Loader2 className="w-8 h-8 text-destructive animate-spin" />
                             </div>
-                        ) : expenses.length === 0 ? (
+                        ) : filteredExpenses.length === 0 ? (
                             <div className="text-center py-10 text-muted-foreground">
                                 <ArrowUpCircle className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                                <p>Nenhuma despesa registrada ainda.</p>
+                                <p>Nenhuma despesa registrada neste período.</p>
                             </div>
                         ) : (
-                            expenses.map((expense) => {
+                            filteredExpenses.map((expense) => {
                                 const bucketInfo = getBucket(expense.category);
                                 const isCancelled = expense.is_recurring && expense.recurrence_end_date;
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { ArrowDownCircle, Plus, Calendar, DollarSign, Tag, FileText, Loader2, Edit2, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,11 @@ export default function IncomesPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
+
+    const now = new Date();
+    const [selectedMonth, setSelectedMonth] = useState<string>(String(now.getMonth() + 1).padStart(2, '0'));
+    const [selectedYear, setSelectedYear] = useState<string>(String(now.getFullYear()));
+
     const supabase = createClient();
 
     const { register, handleSubmit, reset, formState: { errors } } = useForm<IncomeFormData>();
@@ -119,6 +124,13 @@ export default function IncomesPage() {
             alert("Erro ao excluir receita.");
         }
     };
+
+    const filteredIncomes = useMemo(() => {
+        return incomes.filter(i => {
+            if (selectedMonth === "all") return i.date.startsWith(selectedYear);
+            return i.date.startsWith(`${selectedYear}-${selectedMonth}`);
+        });
+    }, [incomes, selectedMonth, selectedYear]);
 
     return (
         <div className="p-4 md:p-8 space-y-6 max-w-5xl mx-auto">
@@ -219,20 +231,55 @@ export default function IncomesPage() {
 
                 {/* List of Incomes */}
                 <div className="lg:col-span-2 bg-card border border-border rounded-xl p-6 shadow-sm flex flex-col">
-                    <h2 className="text-xl font-bold mb-4">Histórico de Entradas</h2>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
+                        <h2 className="text-xl font-bold">Histórico de Entradas</h2>
+
+                        <div className="flex items-center gap-2">
+                            <select
+                                value={selectedMonth}
+                                onChange={(e) => setSelectedMonth(e.target.value)}
+                                className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-success/50"
+                            >
+                                <option value="all">Ano Todo</option>
+                                <option value="01">Janeiro</option>
+                                <option value="02">Fevereiro</option>
+                                <option value="03">Março</option>
+                                <option value="04">Abril</option>
+                                <option value="05">Maio</option>
+                                <option value="06">Junho</option>
+                                <option value="07">Julho</option>
+                                <option value="08">Agosto</option>
+                                <option value="09">Setembro</option>
+                                <option value="10">Outubro</option>
+                                <option value="11">Novembro</option>
+                                <option value="12">Dezembro</option>
+                            </select>
+
+                            <select
+                                value={selectedYear}
+                                onChange={(e) => setSelectedYear(e.target.value)}
+                                className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-success/50"
+                            >
+                                {Array.from({ length: 5 }).map((_, i) => {
+                                    const year = new Date().getFullYear() - 2 + i;
+                                    return <option key={year} value={year}>{year}</option>;
+                                })}
+                            </select>
+                        </div>
+                    </div>
 
                     <div className="flex-1 overflow-auto pr-2 space-y-3">
                         {isLoading ? (
                             <div className="flex items-center justify-center py-10">
                                 <Loader2 className="w-8 h-8 text-success animate-spin" />
                             </div>
-                        ) : incomes.length === 0 ? (
+                        ) : filteredIncomes.length === 0 ? (
                             <div className="text-center py-10 text-muted-foreground">
                                 <ArrowDownCircle className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                                <p>Nenhuma receita registrada ainda.</p>
+                                <p>Nenhuma receita registrada neste período.</p>
                             </div>
                         ) : (
-                            incomes.map((income) => (
+                            filteredIncomes.map((income) => (
                                 <div key={income.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-background border border-border rounded-xl gap-3 hover:border-success/30 transition-colors group">
                                     <div className="flex items-center gap-4">
                                         <div className="bg-success/10 p-2.5 rounded-full text-success">
