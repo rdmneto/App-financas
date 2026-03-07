@@ -109,7 +109,7 @@ export default function DashboardPage() {
             const currentMonth = now.getMonth();
 
             // Helper to generate virtuals for a given expense list
-            const processExpenses = (expenseList: any[], isPastList: boolean) => {
+            const processExpenses = (expenseList: any[], targetEndDate: Date) => {
                 let processed: any[] = [];
                 expenseList.forEach(e => {
                     // Always add the original if it belongs to this list's timeframe
@@ -120,8 +120,8 @@ export default function DashboardPage() {
                         let loopDate = new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr.split('T')[0]));
                         loopDate.setMonth(loopDate.getMonth() + 1);
 
-                        // Use the chart's 'endDate' to allow viewing future months properly
-                        let endLimit = new Date(endDate.getFullYear(), endDate.getMonth(), loopDate.getDate());
+                        // Use the targetEndDate to allow viewing future months properly
+                        let endLimit = new Date(targetEndDate.getFullYear(), targetEndDate.getMonth(), loopDate.getDate());
                         if (e.recurrence_end_date) {
                             const [ey, em, ed] = e.recurrence_end_date.split('-');
                             const cancelDate = new Date(Number(ey), Number(em) - 1, Number(ed.split('T')[0]));
@@ -150,9 +150,8 @@ export default function DashboardPage() {
                             const vDay = String(loopDate.getDate()).padStart(2, '0');
                             const virtualDateStr = `${vYear}-${vMonth}-${vDay}T00:00:00`;
 
-                            // Push any virtual clones up to the chart's endDate.
-                            // Partitions between 'past' and 'current' bins happen after this loop returns.
-                            if (loopDate <= endDate) {
+                            // Push any virtual clones up to the target end date.
+                            if (loopDate <= targetEndDate) {
                                 processed.push({ ...e, date: virtualDateStr });
                             }
 
@@ -164,14 +163,16 @@ export default function DashboardPage() {
                 return processed;
             };
 
-            const processedExpensesData = expensesRes.data ? processExpenses(expensesRes.data, false) : [];
-            const processedGlobalExpensesData = globalExpensesRes.data ? processExpenses(globalExpensesRes.data, true) : [];
+            // For global expenses (true balance up to today), we project until "now".
+            // For period expenses (chart/summary lists), we project until "endDate".
+            const todayEnd = new Date();
+            todayEnd.setHours(23, 59, 59, 999);
 
+            const processedExpensesData = expensesRes.data ? processExpenses(expensesRes.data, endDate) : [];
+            const processedGlobalExpensesData = globalExpensesRes.data ? processExpenses(globalExpensesRes.data, todayEnd) : [];
 
-            // For the current period (offset=0), filter out expenses with dates after today
-            // so that virtual recurring charges for future months don't inflate the totals.
-            const today = new Date();
-            today.setHours(23, 59, 59, 999);
+            // For the current period, filter out expenses outside the selected timeframe
+            // (processExpenses generates clones from the start date of the recurrence up to endDate, some might be before our startDate or after our endDate).
             const expensesForTotals = processedExpensesData.filter(e => {
                 const [year, month, day] = e.date.split('-');
                 const eDate = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
@@ -230,7 +231,7 @@ export default function DashboardPage() {
             processedGlobalExpensesData.forEach(e => {
                 const [year, month, day] = e.date.split('-');
                 const eDate = new Date(Number(year), Number(month) - 1, Number(day.split('T')[0]));
-                if (eDate <= today) {
+                if (eDate <= todayEnd) {
                     globalExpensesSum += e.value;
                 }
             });
