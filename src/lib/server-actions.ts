@@ -1,7 +1,6 @@
 "use server";
 
-// @ts-ignore - bypass path issue in build
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+// No top-level pdfjs import to avoid render errors
 
 interface Transaction {
     date: Date;
@@ -164,14 +163,18 @@ function parsePDFText(text: string): Transaction[] {
 // Ensure pdfjs won't clash by setting dummy worker config since we are purely server-side legacy
 export async function parsePDFBufferServer(base64Data: string): Promise<string> {
     try {
+        console.log("PDF Parsing Server: starting...");
+        // Dynamic import inside the action to avoid crashes during page render
+        // @ts-ignore
+        const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+
         const buffer = Buffer.from(base64Data, "base64");
         const uint8Array = new Uint8Array(buffer);
 
-        // Since we are running in Node (NextJS Server Action), we use legacy build
         const doc = await pdfjsLib.getDocument({
             data: uint8Array,
             useSystemFonts: true,
-            standardFontDataUrl: `node_modules/pdfjs-dist/standard_fonts/`
+            disableFontFace: true, // Safer for server-side
         }).promise;
 
         let fullText = '';
