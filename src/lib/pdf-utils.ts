@@ -11,6 +11,9 @@ export function parsePDFText(text: string): Transaction[] {
     // Normalize: collapse multiple spaces and filter very short lines
     const rawLines = text.split('\n');
     const lines: string[] = [];
+    const normalizedFullText = text.toUpperCase().replace(/\s+/g, '');
+    let isSantanderGlobal = normalizedFullText.includes("SANTANDER") || normalizedFullText.includes("EXTRATOCONSOLIDADO");
+
     for (let i = 0; i < rawLines.length; i++) {
         const line = rawLines[i].replace(/\s+/g, ' ').trim();
         if (line.length > 5) {
@@ -24,7 +27,7 @@ export function parsePDFText(text: string): Transaction[] {
     const patternShort = /(\d{2}\s+[A-Za-z]{3})\s+(.+?)\s+R?\$?\s*([\d.,]+)\s*$/i;
     const patternSicredi = /^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-]?\d{1,3}(?:\.\d{3})*,\d{2})(?:\s+(\d{1,3}(?:\.\d.3})*,\d{2}))?$/i;
     const patternSantander = /^(\d{2}\/\d{2})\s+(.+?)\s+.*?([-+]?\d{1,3}(?:\.\d{3})*,\d{2}[-+]?)(?:\s+[\d.,]+\s*)?$/;
-    const patternSantanderYear = /Resumo\s+-\s+\w+\/(\d{4})/i;
+    const patternSantanderYear = /Resumo\s+-\s+\d?[\w\s-]*\/?(\d{4})/i;
 
     const monthMap: Record<string, number> = {
         jan: 0, fev: 1, feb: 1, mar: 2, abr: 3, apr: 3, mai: 4, may: 4,
@@ -33,7 +36,7 @@ export function parsePDFText(text: string): Transaction[] {
     };
     const currentYear = new Date().getFullYear();
     let detectedYear = currentYear;
-    let isSantander = false;
+    let isSantander = isSantanderGlobal;
     let inSantanderMovimentacao = false;
     let santanderContext: 'CC' | 'OTHER' | 'NONE' = 'NONE';
 
@@ -45,10 +48,18 @@ export function parsePDFText(text: string): Transaction[] {
         }
     };
 
+    const blacklist = ["IBOVESPA", "DOLAR COMERCIAL", "EURO", "SALARIO MINIMO", "IPCA", "IGPM", "INPC", "INCC", "CDI", "SELIC", "REFERENCIA", "VALORES PRATICADOS"];
+
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const lineUpper = line.toUpperCase();
         const cleanLine = lineUpper.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+        // Blacklist check: if the line starts with or contains prominent index text, skip it entirely
+        if (blacklist.some(keyword => cleanLine.includes(keyword))) {
+            flushPending();
+            continue;
+        }
 
         // 1. Bank/Section Detection for Santander
         if (cleanLine.includes("SANTANDER")) {
@@ -73,6 +84,7 @@ export function parsePDFText(text: string): Transaction[] {
                 cleanLine.includes("INDICES") ||
                 cleanLine.includes("IBOVESPA") ||
                 cleanLine.includes("FALE CONOSCO") ||
+                cleanLine.includes("PACOTE DE SERVICOS") ||
                 cleanLine.includes("VALORES PRATICADOS")) {
                 santanderContext = 'OTHER';
                 inSantanderMovimentacao = false;
