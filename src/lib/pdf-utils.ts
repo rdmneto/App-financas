@@ -33,73 +33,119 @@ export function parsePDFText(text: string): Transaction[] {
     };
     const currentYear = new Date().getFullYear();
     let detectedYear = currentYear;
+    let isSantander = false;
+    let inSantanderMovimentacao = false;
+    let santanderContext: 'CC' | 'OTHER' | 'NONE' = 'NONE';
 
     let pendingBBTransaction: Transaction | null = null;
+    const flushPending = () => {
+        if (pendingBBTransaction) {
+            transactions.push(pendingBBTransaction);
+            pendingBBTransaction = null;
+        }
+    };
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
+        const lineUpper = line.toUpperCase();
+        const cleanLine = lineUpper.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-        // Track Santander year from resumo
+        // 1. Bank/Section Detection for Santander
+        if (cleanLine.includes("SANTANDER")) {
+            isSantander = true;
+        }
+
         const yearMatch = line.match(patternSantanderYear);
         if (yearMatch) {
+            isSantander = true;
             detectedYear = parseInt(yearMatch[1]);
+            flushPending();
+            continue;
+        }
+
+        if (isSantander) {
+            // Section triggers
+            if (cleanLine.includes("CONTA CORRENTE") && lineUpper.length < 30) {
+                santanderContext = 'CC';
+                flushPending();
+            } else if (cleanLine.includes("INVESTIMENTOS") ||
+                cleanLine.includes("POUPANCA") ||
+                cleanLine.includes("INDICES") ||
+                cleanLine.includes("IBOVESPA") ||
+                cleanLine.includes("FALE CONOSCO") ||
+                cleanLine.includes("VALORES PRATICADOS")) {
+                santanderContext = 'OTHER';
+                inSantanderMovimentacao = false;
+                flushPending();
+            }
+
+            if (cleanLine.includes("MOVIMENTACAO")) {
+                if (santanderContext === 'CC') {
+                    inSantanderMovimentacao = true;
+                } else {
+                    inSantanderMovimentacao = false;
+                }
+                flushPending();
+                continue;
+            }
+        }
+
+        // 3. Global gating for Santander: Ignore everything if detected as Santander but not in Movimentação
+        if (isSantander && !inSantanderMovimentacao) {
             continue;
         }
 
         // Skip common headers
-        if (/^(?:saldo anterior|saldo final|saldo atual|extrato|resumo|cliente|cpf\s?:|cnpj\s?:|período|data\s+hist|saldo do dia|movimentação)/i.test(line)) continue;
+        if (/^(?:saldo anterior|saldo final|saldo atual|extrato|resumo|cliente|cpf\s?:|cnpj\s?:|período|data\s+hist|saldo do dia|movimentação|referência)/i.test(line)) {
+            flushPending();
+            continue;
+        }
         if (line.indexOf("Saldo do dia") !== -1 || line.indexOf("Saldo Anterior") !== -1 || line.indexOf("S A L D O") !== -1 || line.indexOf("Total Devido") !== -1 || line.indexOf("Informações") !== -1 || line.indexOf("SALDO EM") !== -1) {
-            if (pendingBBTransaction) {
-                transactions.push(pendingBBTransaction);
-                pendingBBTransaction = null;
-            }
+            flushPending();
             continue;
         }
 
-        // Santander Check
-        const santanderMatch = line.match(patternSantander);
-        if (santanderMatch) {
-            if (pendingBBTransaction) {
-                transactions.push(pendingBBTransaction);
-                pendingBBTransaction = null;
+        // 2. Transaction Parsing
+        // Santander Check (Only if in valid main account section)
+        if (inSantanderMovimentacao) {
+            const santanderMatch = line.match(patternSantander);
+            if (santanderMatch) {
+                flushPending();
+
+                const dateParts = santanderMatch[1].split('/');
+                const day = parseInt(dateParts[0]);
+                const month = parseInt(dateParts[1]) - 1;
+                const date = new Date(Date.UTC(detectedYear, month, day, 12, 0, 0));
+
+                let valStr = santanderMatch[3].replace(/\./g, '').replace(',', '.').trim();
+                let isNegative = false;
+
+                if (valStr.endsWith('-')) {
+                    isNegative = true;
+                    valStr = valStr.substring(0, valStr.length - 1);
+                } else if (valStr.startsWith('-')) {
+                    isNegative = true;
+                    valStr = valStr.substring(1);
+                }
+
+                const value = parseFloat(valStr);
+
+                if (!isNaN(date.getTime()) && !isNaN(value) && value !== 0) {
+                    pendingBBTransaction = {
+                        date,
+                        description: santanderMatch[2].trim(),
+                        value: value,
+                        type: isNegative ? 'expense' : 'income'
+                    };
+                }
+                continue;
             }
-
-            const dateParts = santanderMatch[1].split('/');
-            const day = parseInt(dateParts[0]);
-            const month = parseInt(dateParts[1]) - 1;
-            const date = new Date(Date.UTC(detectedYear, month, day, 12, 0, 0));
-
-            let valStr = santanderMatch[3].replace(/\./g, '').replace(',', '.').trim();
-            let isNegative = false;
-
-            if (valStr.endsWith('-')) {
-                isNegative = true;
-                valStr = valStr.substring(0, valStr.length - 1);
-            } else if (valStr.startsWith('-')) {
-                isNegative = true;
-                valStr = valStr.substring(1);
-            }
-
-            const value = parseFloat(valStr);
-
-            if (!isNaN(date.getTime()) && !isNaN(value) && value !== 0) {
-                pendingBBTransaction = {
-                    date,
-                    description: santanderMatch[2].trim(),
-                    value: value,
-                    type: isNegative ? 'expense' : 'income'
-                };
-            }
-            continue;
         }
 
         // Sicredi Check
         const sicrediMatch = line.match(patternSicredi);
         if (sicrediMatch) {
-            if (pendingBBTransaction) {
-                transactions.push(pendingBBTransaction);
-                pendingBBTransaction = null;
-            }
+            flushPending();
             if (line.indexOf("Custo Efetivo") === -1 && line.indexOf("CET") === -1 && line.indexOf("Saldo") === -1) {
                 const dateParts = sicrediMatch[1].split('/');
                 const date = new Date(Date.UTC(Number(dateParts[2]), Number(dateParts[1]) - 1, Number(dateParts[0]), 12, 0, 0));
@@ -123,7 +169,7 @@ export function parsePDFText(text: string): Transaction[] {
         // BB Pending check
         let match = line.match(patternBBPending);
         if (match) {
-            if (pendingBBTransaction) transactions.push(pendingBBTransaction);
+            flushPending();
             const dateParts = match[1].split('/');
             const date = new Date(Date.UTC(Number(dateParts[2]), Number(dateParts[1]) - 1, Number(dateParts[0]), 12, 0, 0));
             const value = parseFloat(match[2].replace(/\./g, '').replace(',', '.'));
@@ -142,13 +188,9 @@ export function parsePDFText(text: string): Transaction[] {
         if (pendingBBTransaction) {
             const isPatternMatch = line.match(patternFull) || line.match(patternShort) || line.match(patternSicredi) || line.match(patternSantander);
             if (isPatternMatch) {
-                transactions.push(pendingBBTransaction);
-                pendingBBTransaction = null;
-                // Since it's a pattern, we should probably re-process this line, 
-                // but for now let's just push and continue (the loop will hit the next patterns if we're careful. 
-                // Wait, if it matched a pattern above it already 'continued'. So if we're here, it didn't match those.
+                flushPending();
             } else {
-                if (!line.match(/^\d+$/) && !line.includes("BB Rende Fácil") && !line.includes("Rende Facil") && !line.includes("Pix - Recebido") && !line.includes("Pix - Enviado") && !line.includes("Transferência enviada") && !line.includes("Transferência recebida") && !line.includes("SALDO EM") && !line.includes("REMUNERACAO") && !line.includes("APLICACAO")) {
+                if (!line.match(/^\d+$/) && !line.includes("BB Rende Fácil") && !line.includes("Rende Facil") && !line.includes("Pix - Recebido") && !line.includes("Pix - Enviado") && !line.includes("Transferência enviada") && !line.includes("Transferência recebida") && !line.includes("SALDO EM") && !line.includes("REMUNERACAO") && !line.includes("APLICACAO") && !line.includes("REFERÊNCIA") && !line.includes("REFERENCIA") && !line.includes("SANTANDER") && !line.includes("###")) {
                     pendingBBTransaction.description += (pendingBBTransaction.description ? ' ' : '') + line.trim();
                 }
                 continue;
