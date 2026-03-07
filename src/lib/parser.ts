@@ -190,6 +190,10 @@ export async function parsePDF(file: File): Promise<Transaction[]> {
         fullText += pageText + '\n';
     }
 
+    console.log('--- RAW PDF TEXT EXTRACTED ---');
+    console.log(fullText);
+    console.log('------------------------------');
+
     return parsePDFText(fullText);
 }
 
