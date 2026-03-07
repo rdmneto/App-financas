@@ -37,18 +37,6 @@ const KEYWORD_MAP: { keywords: string[]; category: string }[] = [
     { keywords: ['ASSINATURA', 'ADOBE', 'MICROSOFT', 'OFFICE 365', 'GOOGLE ONE', 'APPLE', 'ICLOUD'], category: 'Assinaturas' },
 ];
 
-export function suggestCategory(description: string): string {
-    const upper = description.toUpperCase();
-    for (const entry of KEYWORD_MAP) {
-        for (const kw of entry.keywords) {
-            if (upper.includes(kw)) {
-                return entry.category;
-            }
-        }
-    }
-    return '';
-}
-
 // ---------------------------------------------------------------------------
 // OFX parser
 // ---------------------------------------------------------------------------
@@ -58,7 +46,8 @@ export function parseOFX(content: string): Transaction[] {
     const blocks = content.split('<STMTTRN>');
     blocks.shift();
 
-    for (const block of blocks) {
+    for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
         const trnamtMatch = block.match(/<TRNAMT>([\d.-]+)/);
         const dtpostedMatch = block.match(/<DTPOSTED>(\d{8})/);
         const memoMatch = block.match(/<MEMO>([^<]+)/) || block.match(/<NAME>([^<]+)/);
@@ -85,21 +74,53 @@ export function parseOFX(content: string): Transaction[] {
     return transactions;
 }
 
+// Ensure all map/filter/forEach callbacks are very safe for mobile
+export function suggestCategory(description: string): string {
+    const upper = description.toUpperCase();
+    for (let i = 0; i < KEYWORD_MAP.length; i++) {
+        const entry = KEYWORD_MAP[i];
+        for (let j = 0; j < entry.keywords.length; j++) {
+            const kw = entry.keywords[j];
+            if (upper.indexOf(kw) !== -1) {
+                return entry.category;
+            }
+        }
+    }
+    return '';
+}
+
+// ---------------------------------------------------------------------------
+// CSV parser
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // CSV parser
 // ---------------------------------------------------------------------------
 export function parseCSV(content: string): Transaction[] {
-    const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    const rawLines = content.split('\n');
+    const lines: string[] = [];
+    for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i].trim();
+        if (line.length > 0) {
+            lines.push(line);
+        }
+    }
+
     if (lines.length < 2) return [];
 
     const firstLine = lines[0];
-    const separator = firstLine.includes(';') ? ';' : ',';
+    const separator = firstLine.indexOf(';') !== -1 ? ';' : ',';
 
     const headers = firstLine.toLowerCase().split(separator);
+    let dateIdx = -1;
+    let descIdx = -1;
+    let valueIdx = -1;
 
-    const dateIdx = headers.findIndex(h => h.includes('data') || h.includes('date'));
-    const descIdx = headers.findIndex(h => h.includes('desc') || h.includes('memo') || h.includes('nome') || h.includes('estabelecimento') || h.includes('lancamento') || h.includes('lançamento'));
-    const valueIdx = headers.findIndex(h => h.includes('valor') || h.includes('amount') || h.includes('value'));
+    for (let i = 0; i < headers.length; i++) {
+        const h = headers[i];
+        if (h.indexOf('data') !== -1 || h.indexOf('date') !== -1) dateIdx = i;
+        if (h.indexOf('desc') !== -1 || h.indexOf('memo') !== -1 || h.indexOf('nome') !== -1 || h.indexOf('estabelecimento') !== -1 || h.indexOf('lancamento') !== -1 || h.indexOf('lançamento') !== -1) descIdx = i;
+        if (h.indexOf('valor') !== -1 || h.indexOf('amount') !== -1 || h.indexOf('value') !== -1) valueIdx = i;
+    }
 
     if (dateIdx === -1 || descIdx === -1 || valueIdx === -1) {
         return [];
@@ -109,7 +130,7 @@ export function parseCSV(content: string): Transaction[] {
 
     for (let i = 1; i < lines.length; i++) {
         const columns = lines[i].split(separator);
-        if (columns.length <= Math.max(dateIdx, descIdx, valueIdx)) continue;
+        if (columns.length <= dateIdx || columns.length <= descIdx || columns.length <= valueIdx) continue;
 
         const dateStr = columns[dateIdx].trim();
         const description = columns[descIdx].trim().replace(/^"(.*)"$/, '$1');
@@ -119,7 +140,7 @@ export function parseCSV(content: string): Transaction[] {
         if (isNaN(value)) continue;
 
         let date: Date;
-        if (dateStr.includes('/')) {
+        if (dateStr.indexOf('/') !== -1) {
             const parts = dateStr.split('/');
             if (parts[0].length === 4) {
                 date = new Date(Date.UTC(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]), 12, 0, 0));
@@ -133,8 +154,8 @@ export function parseCSV(content: string): Transaction[] {
         if (isNaN(date.getTime())) continue;
 
         transactions.push({
-            date,
-            description,
+            date: date,
+            description: description,
             value: Math.abs(value),
             type: value >= 0 ? 'income' : 'expense'
         });
@@ -147,11 +168,11 @@ export function parseCSV(content: string): Transaction[] {
 // PDF parser (uses pdfjs-dist, runs in browser environment)
 // ---------------------------------------------------------------------------
 export async function parsePDF(file: File): Promise<Transaction[]> {
-    // Dynamic import so Next.js doesn't try to SSR pdfjs
-    const pdfjsLib = await import('pdfjs-dist');
+    // Dynamic import of the legacy build for better compatibility with older mobile browsers
+    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
-    // Set the worker source to the jsdelivr CDN version to avoid bundling issues
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+    // Set the worker source to the legacy worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/legacy/build/pdf.worker.min.mjs`;
 
     const arrayBuffer = await file.arrayBuffer();
     // Convert to Uint8Array to prevent issues in mobile webviews where ArrayBuffer behavior differs
@@ -205,7 +226,14 @@ function parsePDFText(text: string): Transaction[] {
     const transactions: Transaction[] = [];
 
     // Normalize: collapse multiple spaces
-    const lines = text.split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(l => l.length > 5);
+    const rawLines = text.split('\n');
+    const lines: string[] = [];
+    for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i].replace(/\s+/g, ' ').trim();
+        if (line.length > 5) {
+            lines.push(line);
+        }
+    }
 
     // Banco do Brasil Pattern (from user log)
     // 05/01/2026  500,00 (+) 14397  52204152217051 
@@ -228,10 +256,11 @@ function parsePDFText(text: string): Transaction[] {
 
     let pendingBBTransaction: Transaction | null = null;
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
         // Skip header or separator lines
         if (/^(?:saldo anterior|saldo final|saldo atual|extrato|resumo|cliente|cpf\s?:|cnpj\s?:|período|data\s+hist|saldo do dia)/i.test(line)) continue;
-        if (line.includes("Saldo do dia") || line.includes("Saldo Anterior") || line.includes("S A L D O") || line.includes("Total Devido") || line.includes("Informações")) {
+        if (line.indexOf("Saldo do dia") !== -1 || line.indexOf("Saldo Anterior") !== -1 || line.indexOf("S A L D O") !== -1 || line.indexOf("Total Devido") !== -1 || line.indexOf("Informações") !== -1) {
             if (pendingBBTransaction) {
                 transactions.push(pendingBBTransaction);
                 pendingBBTransaction = null;
@@ -247,8 +276,13 @@ function parsePDFText(text: string): Transaction[] {
         if (sicrediMatch) {
             // Manual check to skip header/footer/saldo lines (previously handled by lookbehinds)
             if (!line.includes("Custo Efetivo") && !line.includes("CET") && !line.includes("Saldo")) {
-                const [, dateStr, desc, valStr] = sicrediMatch;
-                const [day, month, year] = dateStr.split('/').map(Number);
+                const dateStr = sicrediMatch[1];
+                const desc = sicrediMatch[2];
+                const valStr = sicrediMatch[3];
+                const dateParts = dateStr.split('/');
+                const day = Number(dateParts[0]);
+                const month = Number(dateParts[1]);
+                const year = Number(dateParts[2]);
                 const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 
                 const cleanVal = valStr.replace(/\./g, '').replace(',', '.');
@@ -272,8 +306,14 @@ function parsePDFText(text: string): Transaction[] {
                 transactions.push(pendingBBTransaction);
             }
 
-            const [, dateStr, valStr, sign] = match;
-            const [day, month, year] = dateStr.split('/').map(Number);
+            const dateStr = match[1];
+            const valStr = match[2];
+            const sign = match[3];
+
+            const dateParts = dateStr.split('/');
+            const day = Number(dateParts[0]);
+            const month = Number(dateParts[1]);
+            const year = Number(dateParts[2]);
             const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 
             const value = parseFloat(valStr.replace(/\./g, '').replace(',', '.'));
@@ -307,19 +347,25 @@ function parsePDFText(text: string): Transaction[] {
 
         match = line.match(patternFull);
         if (match) {
-            const [, dateStr, desc, valStr] = match;
-            const [day, month, year] = dateStr.split('/').map(Number);
+            const dateStr = match[1];
+            const desc = match[2];
+            const valStr = match[3];
+
+            const dateParts = dateStr.split('/');
+            const day = Number(dateParts[0]);
+            const month = Number(dateParts[1]);
+            const year = Number(dateParts[2]);
             const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 
             const cleanVal = valStr.replace(/\s/g, '').replace(',', '.');
-            const isNegative = cleanVal.startsWith('-');
+            const isNegative = cleanVal.indexOf('-') === 0;
             const value = parseFloat(cleanVal.replace(/[^0-9.]/g, ''));
 
             if (!isNaN(date.getTime()) && !isNaN(value) && value > 0) {
                 transactions.push({
-                    date,
+                    date: date,
                     description: desc.trim(),
-                    value,
+                    value: value,
                     type: isNegative ? 'expense' : 'income'
                 });
             }
@@ -328,10 +374,13 @@ function parsePDFText(text: string): Transaction[] {
 
         match = line.match(patternShort);
         if (match) {
-            const [, dateStr, desc, valStr] = match;
+            const dateStr = match[1];
+            const desc = match[2];
+            const valStr = match[3];
+
             const parts = dateStr.trim().split(/\s+/);
             const day = parseInt(parts[0]);
-            const monthKey = parts[1]?.toLowerCase().substring(0, 3);
+            const monthKey = parts[1] ? parts[1].toLowerCase().substring(0, 3) : '';
             const month = monthMap[monthKey];
 
             if (month === undefined || isNaN(day)) continue;
@@ -355,10 +404,18 @@ function parsePDFText(text: string): Transaction[] {
     if (pendingBBTransaction) transactions.push(pendingBBTransaction);
 
     // Ensure all transactions have at least SOME description value
-    return transactions.map(t => {
-        if (!t.description || t.description.trim() === '') t.description = 'Transação';
+    for (let i = 0; i < transactions.length; i++) {
+        const t = transactions[i];
+        if (!t.description || t.description.trim() === '') {
+            t.description = 'Transação';
+        }
         // A minor clean up just in case dates like 06/01 13:46 prepend the name
-        t.description = t.description.replace(/^\d{2}\/\d{2}\s\d{2}:\d{2}\s?/, '');
-        return t;
-    });
+        // Avoid potentially crashing regex or modern methods
+        const desc = t.description;
+        if (desc && desc.length > 5) {
+            t.description = desc.replace(/^\d{2}\/\d{2}\s\d{2}:\d{2}\s?/, '');
+        }
+    }
+
+    return transactions;
 }

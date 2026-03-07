@@ -92,18 +92,25 @@ export default function ImportPage() {
                 throw new Error("Nenhuma transação encontrada no arquivo. Verifique se o formato está correto.");
             }
 
-            setTransactions(parsed.map((t, i) => {
+            const newTransactions: ImportTransaction[] = [];
+            for (let i = 0; i < parsed.length; i++) {
+                const t = parsed[i];
                 const suggested = importMode === "credit_card" && t.type === "expense"
                     ? suggestCategory(t.description)
                     : "";
-                return {
-                    ...t,
-                    id: `import-${i}`,
+
+                newTransactions.push({
+                    date: t.date,
+                    description: t.description,
+                    value: t.value,
+                    type: t.type,
+                    id: "import-" + i,
                     selected: true,
                     category: suggested,
-                    suggestedCategory: suggested || undefined,
-                };
-            }));
+                    suggestedCategory: suggested || undefined
+                });
+            }
+            setTransactions(newTransactions);
         } catch (err: any) {
             setError(err.message || "Erro ao processar arquivo.");
         } finally {
@@ -112,68 +119,126 @@ export default function ImportPage() {
     };
 
     const toggleSelect = (id: string) => {
-        setTransactions(prev => prev.map(t =>
-            t.id === id ? { ...t, selected: !t.selected } : t
-        ));
+        setTransactions(prev => {
+            const next = [];
+            for (let i = 0; i < prev.length; i++) {
+                const t = prev[i];
+                if (t.id === id) {
+                    next.push(Object.assign({}, t, { selected: !t.selected }));
+                } else {
+                    next.push(t);
+                }
+            }
+            return next;
+        });
     };
 
     const updateCategory = (id: string, category: string) => {
-        setTransactions(prev => prev.map(t =>
-            t.id === id ? { ...t, category } : t
-        ));
+        setTransactions(prev => {
+            const next = [];
+            for (let i = 0; i < prev.length; i++) {
+                const t = prev[i];
+                if (t.id === id) {
+                    next.push(Object.assign({}, t, { category }));
+                } else {
+                    next.push(t);
+                }
+            }
+            return next;
+        });
     };
 
     const toggleType = (id: string) => {
-        setTransactions(prev => prev.map(t =>
-            t.id === id ? { ...t, type: t.type === 'income' ? 'expense' : 'income', category: "", suggestedCategory: undefined } : t
-        ));
+        setTransactions(prev => {
+            const next = [];
+            for (let i = 0; i < prev.length; i++) {
+                const t = prev[i];
+                if (t.id === id) {
+                    next.push(Object.assign({}, t, {
+                        type: t.type === 'income' ? 'expense' : 'income',
+                        category: "",
+                        suggestedCategory: undefined
+                    }));
+                } else {
+                    next.push(t);
+                }
+            }
+            return next;
+        });
     };
 
     const handleSave = async () => {
-        const selectedTransactions = transactions.filter(t => t.selected);
+        const selectedTransactions = [];
+        for (let i = 0; i < transactions.length; i++) {
+            if (transactions[i].selected) {
+                selectedTransactions.push(transactions[i]);
+            }
+        }
+
         if (selectedTransactions.length === 0) return;
 
-        const invalid = selectedTransactions.some(t => t.category === "");
-        if (invalid) {
+        let isInvalid = false;
+        for (let i = 0; i < selectedTransactions.length; i++) {
+            if (selectedTransactions[i].category === "") {
+                isInvalid = true;
+                break;
+            }
+        }
+
+        if (isInvalid) {
             alert("Por favor, selecione uma categoria para todas as transações selecionadas.");
             return;
         }
 
         setIsSaving(true);
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: userData } = await supabase.auth.getUser();
+        const user = userData.user;
         if (!user) return;
 
         try {
-            const expenses = selectedTransactions.filter(t => t.type === 'expense');
-            const incomes = selectedTransactions.filter(t => t.type === 'income');
+            const expenses = [];
+            const incomes = [];
+            for (let i = 0; i < selectedTransactions.length; i++) {
+                const t = selectedTransactions[i];
+                if (t.type === 'expense') expenses.push(t);
+                else incomes.push(t);
+            }
 
             if (expenses.length > 0) {
-                const expenseData = expenses.map(t => ({
-                    user_id: user.id,
-                    value: t.value,
-                    date: t.date.toISOString().split('T')[0],
-                    description: `${t.category} - ${t.description}`,
-                    category_type: getBucket(t.category)
-                }));
+                const expenseData = [];
+                for (let i = 0; i < expenses.length; i++) {
+                    const t = expenses[i];
+                    expenseData.push({
+                        user_id: user.id,
+                        value: t.value,
+                        date: t.date.toISOString().split('T')[0],
+                        description: t.category + " - " + t.description,
+                        category_type: getBucket(t.category)
+                    });
+                }
 
                 const { error: expError } = await supabase.from('expenses').insert(expenseData);
                 if (expError) throw expError;
             }
 
             if (incomes.length > 0) {
-                const incomeData = incomes.map(t => ({
-                    user_id: user.id,
-                    value: t.value,
-                    date: t.date.toISOString().split('T')[0],
-                    description: t.description,
-                    category: t.category
-                }));
+                const incomeData = [];
+                for (let i = 0; i < incomes.length; i++) {
+                    const t = incomes[i];
+                    incomeData.push({
+                        user_id: user.id,
+                        value: t.value,
+                        date: t.date.toISOString().split('T')[0],
+                        description: t.description,
+                        category: t.category
+                    });
+                }
 
                 const { error: incError } = await supabase.from('incomes').insert(incomeData);
                 if (incError) throw incError;
             }
 
-            alert(`${selectedTransactions.length} transações importadas com sucesso!`);
+            alert(selectedTransactions.length + " transações importadas com sucesso!");
             setTransactions([]);
         } catch (err: any) {
             console.error(err);
@@ -183,8 +248,18 @@ export default function ImportPage() {
         }
     };
 
-    const selectedCount = transactions.filter(t => t.selected).length;
-    const suggestedCount = transactions.filter(t => t.suggestedCategory && t.category === t.suggestedCategory).length;
+    let selectedCount = 0;
+    for (let i = 0; i < transactions.length; i++) {
+        if (transactions[i].selected) selectedCount++;
+    }
+
+    let suggestedCount = 0;
+    for (let i = 0; i < transactions.length; i++) {
+        const t = transactions[i];
+        if (t.suggestedCategory && t.category === t.suggestedCategory) {
+            suggestedCount++;
+        }
+    }
 
     return (
         <div className="p-4 md:p-8 space-y-6 max-w-6xl mx-auto">
@@ -406,13 +481,16 @@ export default function ImportPage() {
                                                         </>
                                                     ) : (
                                                         <>
-                                                            {Object.entries(EXPENSE_CATEGORIES).map(([group, cats]) => (
-                                                                <optgroup key={group} label={group}>
-                                                                    {cats.map(cat => (
-                                                                        <option key={cat} value={cat}>{cat}</option>
-                                                                    ))}
-                                                                </optgroup>
-                                                            ))}
+                                                            {Object.keys(EXPENSE_CATEGORIES).map(group => {
+                                                                const cats = (EXPENSE_CATEGORIES as any)[group];
+                                                                return (
+                                                                    <optgroup key={group} label={group}>
+                                                                        {cats.map((cat: string) => (
+                                                                            <option key={cat} value={cat}>{cat}</option>
+                                                                        ))}
+                                                                    </optgroup>
+                                                                );
+                                                            })}
                                                         </>
                                                     )}
                                                 </select>
