@@ -1,6 +1,13 @@
 "use server";
 
 // No top-level pdfjs import to avoid render errors
+// Polyfill DOMMatrix for Node.js environment
+import DOMMatrix from "@thednp/dommatrix";
+
+if (typeof global !== 'undefined' && typeof global.DOMMatrix === 'undefined') {
+    // @ts-ignore
+    global.DOMMatrix = DOMMatrix;
+}
 
 interface Transaction {
     date: Date;
