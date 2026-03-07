@@ -41,7 +41,7 @@ export default function DashboardPage() {
 
     // Top Expenses State
     const [topExpenses, setTopExpenses] = useState<{ description: string, value: number }[]>([]);
-    const [detailedExpenses, setDetailedExpenses] = useState<{ name: string, value: number }[]>([]);
+    const [detailedExpenses, setDetailedExpenses] = useState<{ name: string, value: number, color?: string }[]>([]);
 
     // Expenses Pie Chart States
     const [essentialsSum, setEssentialsSum] = useState(0);
@@ -190,15 +190,27 @@ export default function DashboardPage() {
                 expensesByDesc[desc] = (expensesByDesc[desc] || 0) + e.value;
             });
 
-            const groupedDetailedExpenses = Object.entries(expensesByDesc)
+            const allGroupedDetailed = Object.entries(expensesByDesc)
                 .map(([desc, val]) => ({
                     // Capitalize first letter of each word to make it look nice
                     name: desc.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' '),
                     value: val
                 }))
-                .sort((a, b) => b.value - a.value)
-                .slice(0, 8); // Top 8 descriptions
-            setDetailedExpenses(groupedDetailedExpenses);
+                .sort((a, b) => b.value - a.value);
+
+            const top5Detailed = allGroupedDetailed.slice(0, 5);
+            const othersDetailed = allGroupedDetailed.slice(5).reduce((acc, curr) => acc + curr.value, 0);
+
+            if (othersDetailed > 0) {
+                top5Detailed.push({ name: 'Outros', value: othersDetailed });
+            }
+
+            const DETAILED_COLORS = ['#ef4444', '#f97316', '#eab308', '#84cc16', '#06b6d4', '#8b5cf6', '#d946ef'];
+
+            setDetailedExpenses(top5Detailed.map((item, index) => ({
+                ...item,
+                color: DETAILED_COLORS[index % DETAILED_COLORS.length]
+            })));
 
             expensesForTotals.forEach(e => {
                 eSum += e.value;
@@ -499,38 +511,47 @@ export default function DashboardPage() {
                     )}
                 </div>
 
-                {/* Detailed Expenses Bar Chart */}
-                <div className={cn("lg:col-span-2 bg-card border border-border rounded-xl p-6 shadow-sm", isLoading && "opacity-50 pointer-events-none")}>
-                    <h2 className="text-lg font-bold mb-4">Despesas Detalhadas (Top 8)</h2>
+                {/* Detailed Expenses Pie Chart */}
+                <div className={cn("lg:col-span-1 bg-card border border-border rounded-xl p-6 shadow-sm flex flex-col items-center", isLoading && "opacity-50 pointer-events-none")}>
+                    <h2 className="text-lg font-bold mb-4 self-start">Despesas Detalhadas</h2>
                     {detailedExpenses.length > 0 ? (
-                        <div className="h-[300px] w-full">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart layout="vertical" data={detailedExpenses} margin={{ top: 10, right: 30, left: 10, bottom: 0 }}>
-                                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="var(--border)" />
-                                    <XAxis type="number" hide />
-                                    <YAxis
-                                        type="category"
-                                        dataKey="name"
-                                        axisLine={false}
-                                        tickLine={false}
-                                        tick={{ fill: 'var(--foreground)', fontSize: 13 }}
-                                        width={140}
-                                    />
-                                    <RechartsTooltip
-                                        cursor={{ fill: 'var(--muted)', opacity: 0.4 }}
-                                        contentStyle={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)', borderRadius: '8px' }}
-                                        formatter={(val: any) => [`R$ ${Number(val || 0).toFixed(2).replace('.', ',')}`, "Total Gasto"]}
-                                    />
-                                    <Bar dataKey="value" fill="var(--destructive)" radius={[0, 4, 4, 0]} maxBarSize={30}>
-                                        {detailedExpenses.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fillOpacity={1 - (index * 0.08)} />
-                                        ))}
-                                    </Bar>
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </div>
+                        <>
+                            <div className="h-64 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={detailedExpenses}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={60}
+                                            outerRadius={80}
+                                            paddingAngle={5}
+                                            dataKey="value"
+                                        >
+                                            {detailedExpenses.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.color} />
+                                            ))}
+                                        </Pie>
+                                        <RechartsTooltip formatter={(val: any) => `R$ ${Number(val || 0).toFixed(2).replace('.', ',')}`} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                            <div className="space-y-3 mt-4 w-full">
+                                {detailedExpenses.map((entry, i) => (
+                                    <div key={i} className="flex justify-between items-center text-sm">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color }} />
+                                            <span className="text-foreground truncate max-w-[120px]" title={entry.name}>{entry.name}</span>
+                                        </div>
+                                        <span className="font-medium text-muted-foreground whitespace-nowrap">
+                                            R$ {entry.value.toFixed(2).replace('.', ',')}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
                     ) : (
-                        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm h-[300px]">
+                        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
                             Nenhuma despesa para detalhar.
                         </div>
                     )}
